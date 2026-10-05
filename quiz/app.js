@@ -42,6 +42,12 @@
   const playSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>';
 
   // ---------- Điều hướng (nút Back trên điện thoại) ----------
+  let framed = true;
+  try { framed = window.self !== window.top; } catch { /* khung khác nguồn */ }
+  const nav = {
+    push(v) { if (!framed) try { history.pushState({ v }, ""); } catch { /* bỏ qua */ } },
+    replace(v) { if (!framed) try { history.replaceState({ v }, ""); } catch { /* bỏ qua */ } },
+  };
   function show(view) {
     for (const v of ["home", "quiz", "result"]) $(v).hidden = v !== view;
     window.scrollTo(0, 0);
@@ -51,8 +57,8 @@
   });
 
   // ---------- Tải dữ liệu ----------
-  fetch("questions.json", { cache: "no-cache" })
-    .then((r) => r.json())
+  const inline = document.getElementById("quiz-data");
+  (inline ? Promise.resolve(JSON.parse(inline.textContent)) : fetch("questions.json", { cache: "no-cache" }).then((r) => r.json()))
     .then(init)
     .catch(() => { $("heroSub").textContent = "Không tải được câu hỏi. Kiểm tra kết nối mạng rồi thử lại."; });
 
@@ -67,7 +73,7 @@
     $("allCount").textContent = `${total} câu · ${lessons.length} bài`;
     bindSettings();
     renderHome();
-    if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+    if (!framed && !inline && "serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 
   // ---------- Trang chủ ----------
@@ -159,13 +165,22 @@
   $("resumeGo").addEventListener("click", () => {
     S = store.get("session", null);
     if (!S) return;
-    history.pushState({ v: "quiz" }, "");
+    nav.push("quiz");
     show("quiz");
     renderQuestion();
   });
   $("resumeDrop").addEventListener("click", () => { store.del("session"); renderHome(); });
+  let resetArmed = 0;
   $("resetStats").addEventListener("click", () => {
-    if (!confirm("Xoá toàn bộ tiến độ (câu đã thuộc, câu hay sai)?")) return;
+    const b = $("resetStats");
+    if (!resetArmed) {
+      b.textContent = "Bấm lần nữa để xoá hết tiến độ";
+      resetArmed = setTimeout(() => { resetArmed = 0; b.textContent = "Xoá tiến độ đã lưu"; }, 3000);
+      return;
+    }
+    clearTimeout(resetArmed); resetArmed = 0;
+    b.textContent = "Đã xoá tiến độ";
+    setTimeout(() => { b.textContent = "Xoá tiến độ đã lưu"; }, 1500);
     stats = {}; store.del("stats"); store.del("session"); renderHome();
   });
 
@@ -194,8 +209,8 @@
     }
     S = { title, ids: list, orders, idx: 0, res: [], t0: Date.now(), elapsed: 0, src: ids };
     store.set("session", S);
-    if (!$("result").hidden) history.replaceState({ v: "quiz" }, "");
-    else if ($("quiz").hidden) history.pushState({ v: "quiz" }, "");
+    if (!$("result").hidden) nav.replace("quiz");
+    else if ($("quiz").hidden) nav.push("quiz");
     show("quiz");
     renderQuestion();
   }
@@ -301,7 +316,7 @@
     renderQuestion();
   }
   $("nextBtn").addEventListener("click", next);
-  $("quitBtn").addEventListener("click", () => history.back());
+  $("quitBtn").addEventListener("click", () => goHome());
 
   document.addEventListener("keydown", (e) => {
     if ($("quiz").hidden || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -323,7 +338,7 @@
     const okN = S.res.filter((r) => r.ok).length;
     const wrong = S.res.filter((r) => !r.ok);
     const pct = total ? Math.round((okN / total) * 100) : 0;
-    history.replaceState({ v: "result" }, "");
+    nav.replace("result");
     show("result");
 
     $("pct").textContent = pct + "%";
@@ -363,7 +378,7 @@
   function goHome(viaHistory = true) {
     clearTimeout(autoTimer);
     state = "idle";
-    if (viaHistory && history.state && history.state.v) { history.back(); return; }
+    if (viaHistory && !framed && history.state && history.state.v) { history.back(); return; }
     show("home");
     renderHome();
   }
