@@ -14,7 +14,7 @@ Website ôn tập trắc nghiệm nhẹ, nhanh, tối ưu cho điện thoại.
 
 ## Cập nhật câu hỏi
 Tải các file `.docx` vào thư mục [`quiz/source`](quiz/source) trên nhánh `main`.
-GitHub Actions sẽ chạy `tools/docx_to_quiz.py` để tạo `quiz/questions.json` và deploy lại.
+GitHub Actions sẽ chạy `tools/docx_to_quiz.py` để tạo `quiz/questions.json` rồi đưa website lên nhánh `gh-pages`.
 Xem tab **Actions** để kiểm tra cảnh báo (vd câu chưa xác định được đáp án đúng).
 
 Trình chuyển đổi nhận đáp án đúng được đánh dấu bằng tô màu nền, chữ màu, gạch chân,
