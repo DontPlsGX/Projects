@@ -37,8 +37,11 @@ def wval(el):
     return None if el is None else el.get(W("val"))
 
 
+HOMOGLYPHS = str.maketrans("АВСЕНКМОРТХаеорсх", "ABCEHKMOPTXaeopcx")
+
+
 def nfc(s):
-    return unicodedata.normalize("NFC", s or "")
+    return unicodedata.normalize("NFC", s or "").translate(HOMOGLYPHS)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +265,9 @@ OPT_START_RE = re.compile(r"^\s*\*?\s*([A-Ha-h])\s*[.):/]\s*")
 ANS_RE = re.compile(r"^\s*[\[(]?\s*(?:đáp\s*án(?:\s*đúng)?|đa|answer|chọn|=>|→)\s*[:.\-–]?\s*([A-Ha-h])\b\s*[\])]?\s*\.?\s*$", re.I)
 KEY_HEADER_RE = re.compile(r"^\s*(?:bảng\s*)?đáp\s*án\s*(?:tham\s*khảo|trắc\s*nghiệm)?\s*[:.]?\s*", re.I)
 PAIR_RE = re.compile(r"(?<!\d)(\d{1,3})\s*[.\-:)]?\s*([A-Ha-h])(?![A-Za-zÀ-ỹ])")
+TF_HEADER_RE = re.compile(r"^\s*phần\s+(?:ii|2)\b.*đúng\s*[-–]+\s*sai|^\s*(?:phần\s+\S+\.?\s*)?(?:trắc\s*nghiệm\s*)?(?:lựa\s*chọn\s*)?đúng\s*[-–]+\s*sai\s*$", re.I)
+TF_ITEM_RE = re.compile(r"^\s*([a-dA-D])\s*[.)]\s*")
+TF_BLANK_RE = re.compile(r"^[\sa-dA-D.)…_:\-]*$")
 TITLE_RE = re.compile(r"^\s*(bài\s*\d+)\s*[:.\-–]?\s*(.*)$", re.I)
 
 
@@ -300,6 +306,15 @@ def clean(s):
     return s
 
 
+class TF:
+    """Câu Đúng/Sai: đoạn tư liệu + các ý a, b, c, d."""
+
+    def __init__(self, num, intro):
+        self.num, self.intro = num, intro
+        self.passage = []   # [(text, cell)]
+        self.items = []     # [(letter, text, label_flags, body_flags)]
+
+
 class Q:
     def __init__(self, num, text):
         self.num, self.text = num, text
@@ -312,16 +327,52 @@ def add_option(q, line, letter, cstart, end, lstart=None):
     fl = line.flags[cstart:end]
     star = raw.strip().startswith("*") or raw.strip().endswith("*") or (
         lstart is not None and line.text[max(0, lstart - 2):lstart].strip() == "*")
-    q.opts.append({"text": raw, "flags": list(fl), "star": star})
+    label_flags = set()
+    if lstart is not None:
+        for ch, f in zip(line.text[lstart:cstart], line.flags[lstart:cstart]):
+            if ch.strip() and ch != "*":
+                label_flags |= f
+    q.opts.append({"text": raw, "flags": list(fl), "star": star, "label": label_flags})
 
 
 def parse_lines(lines):
     questions, preamble, key, pending_key_cells = [], [], {}, []
+    groups, g, tf = [], None, False
     cur, in_key = None, False
     for line in lines:
         t = line.text
         s = t.strip()
         if not s:
+            continue
+        if not in_key and TF_HEADER_RE.search(s) and is_heading(s):
+            tf, cur = True, None
+            continue
+        if tf and not in_key:
+            mq = Q_RE.match(t)
+            if mq:
+                g = TF(int(mq.group(1)), t[mq.end():].strip())
+                groups.append(g)
+                continue
+            if g is None:
+                continue
+            mi = TF_ITEM_RE.match(t)
+            if TF_BLANK_RE.match(s):
+                continue  # dòng chừa chỗ điền "a. …… b. ……"
+            if mi and (not g.items or LETTERS.index(mi.group(1).upper()) == len(g.items)):
+                lab, body = set(), set()
+                for ch, f in zip(t[:mi.end()], line.flags[:mi.end()]):
+                    if ch.strip():
+                        lab |= f
+                chars = [f for ch, f in zip(t[mi.end():], line.flags[mi.end():]) if ch.strip()]
+                for flag in FLAGS:
+                    if chars and sum(flag in f for f in chars) / len(chars) >= 0.6:
+                        body.add(flag)
+                g.items.append([mi.group(1).lower(), t[mi.end():], lab, body])
+                continue
+            if g.items:
+                g.items[-1][1] += " " + t
+            else:
+                g.passage.append((t, line.cell))
             continue
         if in_key:
             if line.cell:
@@ -401,7 +452,54 @@ def parse_lines(lines):
                     all(re.fullmatch(r"[A-Ha-h]", b[c].strip(" .")) for c in cols):
                 for c in cols:
                     key[int(a[c].strip(" ."))] = b[c].strip(" .").upper()
-    return questions, preamble, key
+    return questions, preamble, key, groups
+
+
+def passage_text(parts):
+    """Ghép đoạn tư liệu; bảng -> mỗi hàng một dòng, các ô cách nhau ' | '."""
+    out, row_key, row = [], None, []
+
+    def flush():
+        if row:
+            out.append(" | ".join(clean(c) for c in row if clean(c)))
+
+    for text, cell in parts:
+        if cell is None:
+            flush(); row, row_key = [], None
+            out.append(clean(text))
+            continue
+        k = (cell[0], cell[1])
+        if k != row_key:
+            flush(); row, row_key, col = [], k, None
+        if row and cell[2] == getattr(passage_text, "_col", None):
+            row[-1] += " " + text
+        else:
+            row.append(text)
+        passage_text._col = cell[2]
+    flush()
+    return "\n".join(l for l in out if l)
+
+
+def tf_questions(lesson_id, groups, problems):
+    # cờ đánh dấu ý Đúng: định dạng xuất hiện ở chữ cái của một số ý (vd chữ màu)
+    used = [f for f in ("color", "hl", "u", "b", "i")
+            if any(f in it[2] or f in it[3] for gr in groups for it in gr.items)
+            and not all(f in it[2] or f in it[3] for gr in groups for it in gr.items)]
+    flag = used[0] if used else None
+    out = []
+    for gr in groups:
+        ctx = "\n".join(x for x in (clean(gr.intro), passage_text(gr.passage)) if x)
+        if not gr.items:
+            problems.append("Câu %d (Đúng/Sai): không tìm thấy các ý a, b, c, d" % gr.num)
+            continue
+        for letter, text, lab, body in gr.items:
+            truth = None if flag is None else (0 if (flag in lab or flag in body) else 1)
+            if truth is None:
+                problems.append("Câu %d%s (Đúng/Sai): chưa xác định được đáp án" % (gr.num, letter))
+            st = clean(text)
+            out.append({"id": qid(lesson_id, "tf|" + ctx + "|" + st), "n": "%d%s" % (gr.num, letter), "t": "tf",
+                        "ctx": ctx, "q": st, "o": ["Đúng", "Sai"], "a": truth})
+    return out
 
 
 def detect_by_format(opts):
@@ -415,6 +513,11 @@ def detect_by_format(opts):
         marked = [i for i, o in enumerate(opts) if frac(o, flag) >= 0.6]
         if len(marked) == 1:
             return marked[0], flag
+    # chỉ chữ cái của đáp án đúng được đánh dấu (vd gạch chân "A.")
+    for flag in FLAGS:
+        marked = [i for i, o in enumerate(opts) if flag in o.get("label", ())]
+        if len(marked) == 1:
+            return marked[0], "chữ cái " + flag
     return None, None
 
 
@@ -424,7 +527,7 @@ def qid(lesson_id, text):
 
 def convert_file(path):
     doc = Document(str(path))
-    questions, preamble, key = parse_lines(iter_lines(doc))
+    questions, preamble, key, groups = parse_lines(iter_lines(doc))
     lesson_id = slug(path.stem)
 
     title, subtitle = None, ""
@@ -437,11 +540,13 @@ def convert_file(path):
         m = TITLE_RE.match(nfc(path.stem).strip(" ."))
         title = m.group(1) if m else nfc(path.stem).strip(" .")
     title = re.sub(r"\s+", " ", title).strip().capitalize()
+    if subtitle and is_heading(subtitle):
+        subtitle = subtitle.capitalize()
 
     out, problems, seen = [], [], set()
     for idx, q in enumerate(questions):
         text = clean(q.text)
-        opts = [clean(o["text"]).strip("* ").strip() for o in q.opts]
+        opts = [re.sub(r"(?<!\.)\.$", "", clean(o["text"]).strip("* ").strip()) for o in q.opts]
         label = "Câu %d" % q.num
         if len(opts) < 2:
             problems.append("%s: không tìm thấy đủ đáp án (%d) – %s" % (label, len(opts), text[:60]))
@@ -464,6 +569,7 @@ def convert_file(path):
             i = qid(lesson_id, i)
         seen.add(i)
         out.append({"id": i, "n": q.num, "q": text, "o": opts, "a": ans})
+    out += tf_questions(lesson_id, groups, problems)
     return {
         "id": lesson_id,
         "title": title,
@@ -494,8 +600,11 @@ def main():
     for f in files:
         lesson, problems = convert_file(f)
         lessons.append(lesson)
-        ok = sum(1 for q in lesson["questions"] if q["a"] is not None)
-        print("✔ %-28s → %s: %d câu (%d có đáp án)" % (f.name, lesson["title"], len(lesson["questions"]), ok))
+        qs = lesson["questions"]
+        ok = sum(1 for q in qs if q["a"] is not None)
+        ntf = sum(1 for q in qs if q.get("t") == "tf")
+        print("✔ %-28s → %s: %d câu trắc nghiệm + %d ý Đúng/Sai (%d/%d có đáp án)"
+              % (f.name, lesson["title"], len(qs) - ntf, ntf, ok, len(qs)))
         for p in problems:
             total_bad += 1
             print("   ⚠ " + p)

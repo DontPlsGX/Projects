@@ -213,7 +213,17 @@ h2 { font-size: 17px; font-weight: 700; }
 .pill.bad { background: var(--bad-soft); color: var(--bad); }
 .tag { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 4px 10px; border-radius: 99px; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.qcard { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 18px; min-height: 120px; display: flex; align-items: center; }
+.qcard { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 18px; min-height: 120px; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.ctx {
+  font-size: 14.5px; line-height: 1.55; color: var(--muted); white-space: pre-line;
+  background: var(--bg); border-radius: 12px; padding: 12px 14px; max-height: 38vh; overflow-y: auto;
+  border-left: 3px solid var(--primary);
+}
+.qtext.long { font-size: 17px; }
+.qkind { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--primary); margin-bottom: -6px; }
+.wcard details { margin: -4px 0 10px; font-size: 14px; color: var(--muted); }
+.wcard summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.wcard details .ctx { margin-top: 8px; max-height: none; }
 .qtext { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.45; }
 .fade { animation: fade .16s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

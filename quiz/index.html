@@ -89,6 +89,12 @@
       <input type="checkbox" id="optAuto"><i></i>
     </label>
     <div class="row">
+      <span><b>Dạng câu</b></span>
+      <div class="seg" id="optKind" role="radiogroup">
+        <button data-v="all">Tất cả</button><button data-v="mc">ABCD</button><button data-v="tf">Đúng/Sai</button>
+      </div>
+    </div>
+    <div class="row">
       <span><b>Số câu mỗi lượt</b></span>
       <div class="seg" id="optLimit" role="radiogroup">
         <button data-v="10">10</button><button data-v="20">20</button><button data-v="40">40</button><button data-v="0">Tất cả</button>
@@ -118,6 +124,8 @@
     <span class="tag" id="qLesson"></span>
   </div>
   <article class="qcard" id="qcard">
+    <div class="ctx" id="qCtx" hidden></div>
+    <span class="qkind" id="qKind" hidden>Nhận định sau Đúng hay Sai?</span>
     <p class="qtext" id="qText"></p>
   </article>
   <div class="options" id="options"></div>
