@@ -14,7 +14,7 @@
 
   let lessons = [];        // [{id,title,subtitle,questions:[...]}]
   const Q = {};            // id -> câu hỏi (kèm lessonTitle)
-  const settings = Object.assign({ shuffleQ: true, shuffleA: true, auto: true, limit: 0 }, store.get("settings", {}));
+  const settings = Object.assign({ shuffleQ: true, shuffleA: true, auto: true, limit: 0, kind: "all" }, store.get("settings", {}));
   let selected = new Set(store.get("selected", []));
   let stats = store.get("stats", {});   // id -> [số lần đúng, số lần sai, lần cuối đúng? 1/0]
   let S = null;            // phiên đang làm
@@ -31,7 +31,9 @@
   }
   // Không xáo đáp án nếu có phương án tham chiếu tới phương án khác ("Cả A và B", "Tất cả đều đúng"...)
   const NO_SHUFFLE = /(tất cả|cả\s+(ba|bốn|hai|3|4|2)\b|các\s+(ý|đáp án|phương án)\s+trên|đều\s+(đúng|sai)|\b[A-D]\s*(và|,|&)\s*[A-D]\b|cả\s+[A-D]\b|không\s+có\s+(ý|đáp án|phương án))/i;
-  const canShuffle = (q) => !q.o.some((t) => NO_SHUFFLE.test(t));
+  const isTF = (q) => q.t === "tf";
+  const canShuffle = (q) => !isTF(q) && !q.o.some((t) => NO_SHUFFLE.test(t));
+  const kindOk = (id) => settings.kind === "all" || (settings.kind === "tf") === isTF(Q[id]);
   const usable = (q) => q.a !== null && q.a !== undefined && q.o.length >= 2;
   const isWeak = (id) => { const s = stats[id]; return !!s && (s[2] === 0 || s[1] > s[0]); };
   const isKnown = (id) => { const s = stats[id]; return !!s && s[2] === 1; };
@@ -70,7 +72,8 @@
     $("demoNote").hidden = !data.demo;
     const total = Object.keys(Q).length;
     $("heroSub").textContent = `${lessons.length} bài · ${total} câu hỏi`;
-    $("allCount").textContent = `${total} câu · ${lessons.length} bài`;
+    const nTF = Object.values(Q).filter(isTF).length;
+    $("allCount").textContent = nTF ? `${total - nTF} ABCD + ${nTF} Đúng/Sai` : `${total} câu · ${lessons.length} bài`;
     bindSettings();
     renderHome();
     if (!framed && !inline && "serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -82,6 +85,7 @@
     list.textContent = "";
     for (const l of lessons) {
       const n = l.questions.length;
+      const nTF = l.questions.filter(isTF).length;
       const known = l.questions.filter((q) => isKnown(q.id)).length;
       const card = el("div", "lesson");
       card.setAttribute("role", "checkbox");
@@ -93,7 +97,7 @@
       if (l.subtitle) info.append(el("span", "desc", l.subtitle));
       const meta = el("span", "meta");
       const bar = el("span", "bar"); const fill = el("i"); fill.style.width = (n ? (known / n) * 100 : 0) + "%"; bar.append(fill);
-      meta.append(el("span", null, `${n} câu`), bar, el("span", null, `${known}/${n}`));
+      meta.append(el("span", null, nTF ? `${n - nTF} ABCD · ${nTF} Đ/S` : `${n} câu`), bar, el("span", null, `${known}/${n}`));
       info.append(meta);
       const go = el("button", "go"); go.innerHTML = playSvg; go.setAttribute("aria-label", "Ôn riêng " + l.title);
       go.addEventListener("click", (e) => { e.stopPropagation(); startSession([l.id], l.title); });
@@ -114,12 +118,12 @@
     $("overallText").textContent = `${known}/${all.length} câu`;
     $("overallBar").style.width = (all.length ? (known / all.length) * 100 : 0) + "%";
 
-    const weak = all.filter(isWeak).length;
+    const weak = all.filter((id) => isWeak(id) && kindOk(id)).length;
     $("startWeak").disabled = !weak;
     $("weakCount").textContent = weak ? `${weak} câu cần ôn lại` : "Chưa có câu sai";
 
     $("toggleAll").textContent = selected.size === lessons.length ? "Bỏ chọn" : "Chọn tất cả";
-    const count = lessons.filter((l) => selected.has(l.id)).reduce((s, l) => s + l.questions.length, 0);
+    const count = lessons.filter((l) => selected.has(l.id)).reduce((s, l) => s + l.questions.filter((q) => kindOk(q.id)).length, 0);
     const take = settings.limit ? Math.min(settings.limit, count) : count;
     $("startBtn").disabled = !count;
     $("startBtn").textContent = !count ? "Chọn ít nhất 1 bài"
@@ -140,6 +144,15 @@
       $(id).checked = settings[key];
       $(id).addEventListener("change", () => { settings[key] = $(id).checked; store.set("settings", settings); });
     }
+    const kseg = $("optKind");
+    const kpaint = () => kseg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", b.dataset.v === settings.kind));
+    kseg.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("role", "radio");
+      b.addEventListener("click", () => { settings.kind = b.dataset.v; store.set("settings", settings); kpaint(); renderHome(); });
+    });
+    kseg.hidden = !Object.values(Q).some(isTF);
+    kseg.closest(".row").hidden = kseg.hidden;
+    kpaint();
     const seg = $("optLimit");
     const paint = () => seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", +b.dataset.v === settings.limit));
     seg.querySelectorAll("button").forEach((b) => {
@@ -161,7 +174,7 @@
     startSession(ids, title);
   });
   $("startAll").addEventListener("click", () => startSession(lessons.map((l) => l.id), "Ôn tập tổng hợp"));
-  $("startWeak").addEventListener("click", () => startWithIds(Object.keys(Q).filter(isWeak), "Câu hay sai"));
+  $("startWeak").addEventListener("click", () => startWithIds(Object.keys(Q).filter((id) => isWeak(id) && kindOk(id)), "Câu hay sai"));
   $("resumeGo").addEventListener("click", () => {
     S = store.get("session", null);
     if (!S) return;
@@ -187,7 +200,7 @@
   // ---------- Phiên ôn tập ----------
   function startSession(lessonIds, title) {
     const ids = [];
-    for (const l of lessons) if (lessonIds.includes(l.id)) for (const q of l.questions) ids.push(q.id);
+    for (const l of lessons) if (lessonIds.includes(l.id)) for (const q of l.questions) if (kindOk(q.id)) ids.push(q.id);
     startWithIds(ids, title);
   }
 
@@ -232,13 +245,19 @@
     $("progBar").style.width = (S.idx / S.ids.length) * 100 + "%";
     $("qLesson").textContent = q.lessonTitle;
     $("qLesson").hidden = lessons.length < 2;
-    $("qText").textContent = q.q;
+    const tf = isTF(q);
+    $("qCtx").hidden = !tf || !q.ctx;
+    $("qCtx").textContent = tf ? q.ctx || "" : "";
+    $("qCtx").scrollTop = 0;
+    $("qKind").hidden = !tf;
+    $("qText").textContent = tf ? `${String(q.n).slice(-1)}. ${q.q}` : q.q;
+    $("qText").classList.toggle("long", q.q.length > 110);
 
     optBox.textContent = "";
     perm.forEach((orig, i) => {
       const b = el("button", "opt");
       b.dataset.i = i;
-      b.append(el("span", "k", LETTERS[i]), el("span", "t", q.o[orig]), el("span", "s"));
+      b.append(el("span", "k", tf ? q.o[orig][0] : LETTERS[i]), el("span", "t", q.o[orig]), el("span", "s"));
       optBox.append(b);
     });
     const card = $("qcard");
@@ -324,6 +343,7 @@
     if (state === "ask") {
       let i = "1234567".indexOf(k);
       if (i < 0) i = LETTERS.indexOf(k);
+      if (S && isTF(Q[S.ids[S.idx]])) { if (k === "Đ" || k === "D") i = 0; else if (k === "S") i = 1; }
       if (i >= 0 && k.length === 1) { e.preventDefault(); answer(i); }
     } else if (state === "answered" && (k === "ENTER" || k === " " || k === "ARROWRIGHT")) {
       e.preventDefault(); next();
@@ -364,7 +384,12 @@
     for (const r of wrong) {
       const q = Q[r.id];
       const c = el("div", "wcard");
-      c.append(el("span", "wn", q.lessonTitle + (q.n ? ` · Câu ${q.n}` : "")), el("p", "wq", q.q));
+      c.append(el("span", "wn", q.lessonTitle + (q.n ? (isTF(q) ? ` · Đúng/Sai câu ${q.n}` : ` · Câu ${q.n}`) : "")));
+      if (isTF(q) && q.ctx) {
+        const d = el("details"); d.append(el("summary", null, "Xem tư liệu"), el("div", "ctx", q.ctx));
+        c.append(d);
+      }
+      c.append(el("p", "wq", isTF(q) ? `${String(q.n).slice(-1)}. ${q.q}` : q.q));
       const y = el("div", "ans yours"); y.append(el("span", "lb", "Bạn chọn"), el("span", "tx", q.o[r.c]));
       const a = el("div", "ans right"); a.append(el("span", "lb", "Đáp án"), el("span", "tx", q.o[q.a]));
       c.append(y, a);
