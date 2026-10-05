@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ôn tập Lịch sử</title>
+<meta name="description" content="Ôn tập trắc nghiệm Lịch sử nhanh, gọn, tối ưu cho điện thoại.">
+<meta name="theme-color" content="#f4f5fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1124" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ôn Sử">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="preload" href="questions.json" as="fetch" crossorigin>
+</head>
+<body>
+
+<!-- ============ TRANG CHỦ ============ -->
+<main id="home" class="view">
+  <header class="hero">
+    <div class="hero-top">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6.5A2.5 2.5 0 0 0 4 21.5"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H19"/><path d="M9 7h6M9 11h4"/></svg>
+      </div>
+      <div>
+        <h1>Ôn tập Lịch sử</h1>
+        <p class="sub" id="heroSub">Đang tải câu hỏi…</p>
+      </div>
+    </div>
+    <div class="overall" id="overall" hidden>
+      <div class="overall-row"><span>Đã thuộc</span><b id="overallText">0/0</b></div>
+      <div class="bar"><i id="overallBar"></i></div>
+    </div>
+  </header>
+
+  <div id="demoNote" class="note" hidden>
+    Đây là <b>câu hỏi mẫu</b>. Hãy tải 3 file .docx của bạn vào thư mục <code>quiz/source</code> trên GitHub, website sẽ tự cập nhật câu hỏi thật.
+  </div>
+
+  <section id="resumeCard" class="card resume" hidden>
+    <div class="resume-info">
+      <span class="eyebrow">Đang làm dở</span>
+      <b id="resumeTitle"></b>
+      <span class="muted" id="resumeMeta"></span>
+    </div>
+    <div class="resume-actions">
+      <button class="btn ghost sm" id="resumeDrop">Bỏ</button>
+      <button class="btn primary sm" id="resumeGo">Tiếp tục</button>
+    </div>
+  </section>
+
+  <section class="quick">
+    <button class="quick-btn all" id="startAll">
+      <span class="qi"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></span>
+      <span class="qt"><b>Ôn tập tổng hợp</b><small id="allCount">Tất cả các bài</small></span>
+    </button>
+    <button class="quick-btn weak" id="startWeak" disabled>
+      <span class="qi"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+      <span class="qt"><b>Câu hay sai</b><small id="weakCount">Chưa có</small></span>
+    </button>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Chọn bài để ôn</h2>
+      <button class="link" id="toggleAll">Chọn tất cả</button>
+    </div>
+    <div id="lessonList" class="lessons" role="group" aria-label="Danh sách bài"></div>
+  </section>
+
+  <section class="card settings">
+    <h2>Tuỳ chọn</h2>
+    <label class="row switch">
+      <span><b>Xáo trộn câu hỏi</b><small>Thứ tự câu khác nhau mỗi lần</small></span>
+      <input type="checkbox" id="optShuffleQ"><i></i>
+    </label>
+    <label class="row switch">
+      <span><b>Xáo trộn đáp án</b><small>Tránh nhớ theo vị trí A/B/C/D</small></span>
+      <input type="checkbox" id="optShuffleA"><i></i>
+    </label>
+    <label class="row switch">
+      <span><b>Tự chuyển khi trả lời đúng</b><small>Không cần bấm “Tiếp tục”</small></span>
+      <input type="checkbox" id="optAuto"><i></i>
+    </label>
+    <div class="row">
+      <span><b>Số câu mỗi lượt</b></span>
+      <div class="seg" id="optLimit" role="radiogroup">
+        <button data-v="10">10</button><button data-v="20">20</button><button data-v="40">40</button><button data-v="0">Tất cả</button>
+      </div>
+    </div>
+    <button class="link danger" id="resetStats">Xoá tiến độ đã lưu</button>
+  </section>
+
+  <div class="spacer"></div>
+  <div class="dock">
+    <button class="btn primary block lg" id="startBtn" disabled>Bắt đầu</button>
+  </div>
+</main>
+
+<!-- ============ LÀM BÀI ============ -->
+<main id="quiz" class="view" hidden>
+  <div class="topbar">
+    <button class="icon-btn" id="quitBtn" aria-label="Thoát">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="progress"><i id="progBar"></i></div>
+    <span class="counter" id="counter">0/0</span>
+  </div>
+  <div class="score">
+    <span class="pill ok"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><b id="okCount">0</b></span>
+    <span class="pill bad"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg><b id="badCount">0</b></span>
+    <span class="tag" id="qLesson"></span>
+  </div>
+  <article class="qcard" id="qcard">
+    <p class="qtext" id="qText"></p>
+  </article>
+  <div class="options" id="options"></div>
+  <div class="spacer"></div>
+
+  <div class="feedback" id="feedback" aria-live="polite">
+    <div class="fb-msg">
+      <span class="fb-icon" id="fbIcon"></span>
+      <span id="fbText"></span>
+    </div>
+    <button class="btn block lg" id="nextBtn">Tiếp tục</button>
+    <div class="fb-timer"><i></i></div>
+  </div>
+</main>
+
+<!-- ============ KẾT QUẢ ============ -->
+<main id="result" class="view" hidden>
+  <section class="result-hero">
+    <div class="ring" id="ring">
+      <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg>
+      <div class="ring-text"><b id="pct">0%</b><small>chính xác</small></div>
+    </div>
+    <h2 id="resTitle"></h2>
+    <p class="muted" id="resSub"></p>
+    <div class="res-stats">
+      <div><b id="resOk" class="okc">0</b><small>Đúng</small></div>
+      <div><b id="resBad" class="badc">0</b><small>Sai</small></div>
+      <div><b id="resTime">0:00</b><small>Thời gian</small></div>
+    </div>
+  </section>
+
+  <div class="res-actions">
+    <button class="btn primary block lg" id="retryWrong">Ôn lại câu sai</button>
+    <div class="two">
+      <button class="btn ghost block" id="retryAll">Làm lại</button>
+      <button class="btn ghost block" id="goHome">Trang chủ</button>
+    </div>
+  </div>
+
+  <section id="wrongSec">
+    <div class="section-head"><h2>Các câu trả lời sai</h2><span class="muted" id="wrongNum"></span></div>
+    <div id="wrongList" class="wrong-list"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
