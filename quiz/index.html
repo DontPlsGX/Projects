@@ -55,6 +55,12 @@
     </div>
   </section>
 
+  <section class="modes" id="modeBar" role="radiogroup" aria-label="Dạng câu hỏi" hidden>
+    <button data-v="mc" role="radio"><span class="mi">ABCD</span><b>Trắc nghiệm</b><small id="cntMc"></small></button>
+    <button data-v="tf" role="radio"><span class="mi">Đ/S</span><b>Đúng / Sai</b><small id="cntTf"></small></button>
+    <button data-v="all" role="radio"><span class="mi">Mix</span><b>Cả hai</b><small id="cntAll"></small></button>
+  </section>
+
   <section class="quick">
     <button class="quick-btn all" id="startAll">
       <span class="qi"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></span>
@@ -88,12 +94,6 @@
       <span><b>Tự chuyển khi trả lời đúng</b><small>Không cần bấm “Tiếp tục”</small></span>
       <input type="checkbox" id="optAuto"><i></i>
     </label>
-    <div class="row">
-      <span><b>Dạng câu</b></span>
-      <div class="seg" id="optKind" role="radiogroup">
-        <button data-v="all">Tất cả</button><button data-v="mc">ABCD</button><button data-v="tf">Đúng/Sai</button>
-      </div>
-    </div>
     <div class="row">
       <span><b>Số câu mỗi lượt</b></span>
       <div class="seg" id="optLimit" role="radiogroup">
