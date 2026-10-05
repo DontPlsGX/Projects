@@ -142,6 +142,21 @@ h2 { font-size: 17px; font-weight: 700; }
 .resume-info .muted { font-size: 13px; }
 .resume-actions { display: flex; gap: 8px; flex: none; }
 
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.modes button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; min-width: 0;
+  padding: 12px; border-radius: 16px; background: var(--card); box-shadow: var(--shadow);
+  border: 2px solid transparent; transition: border-color .12s, background-color .12s, transform .08s;
+}
+.modes button:active { transform: scale(.98); }
+.modes .mi {
+  font-size: 12px; font-weight: 800; letter-spacing: .02em; padding: 3px 8px; border-radius: 8px; margin-bottom: 6px;
+  background: var(--bg); color: var(--muted);
+}
+.modes b { font-size: 15px; line-height: 1.25; }
+.modes small { color: var(--muted); font-size: 12.5px; }
+.modes button[aria-checked="true"] { border-color: var(--primary); background: var(--primary-soft); }
+.modes button[aria-checked="true"] .mi { background: var(--primary); color: #fff; }
 .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .quick-btn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left;
@@ -315,3 +330,4 @@ h2 { font-size: 17px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.lesson .go:disabled { opacity: .4; }
