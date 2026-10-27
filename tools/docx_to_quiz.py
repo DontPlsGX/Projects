@@ -17,6 +17,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 from docx import Document
@@ -594,9 +595,17 @@ def convert_file(path):
         title = m.group(1) if m else nfc(path.stem).strip(" .")
     title = re.sub(r"\s+", " ", title).strip().capitalize()
     if subtitle and is_heading(subtitle):
-        caps = {w for q in questions for w in re.findall(r"\b[A-ZĐ]{2,}\b", q.text)}
-        subtitle = subtitle.capitalize()
-        subtitle = " ".join(w.upper() if w.upper() in caps else w for w in subtitle.split(" "))
+        # hạ chữ hoa nhưng giữ cách viết phổ biến nhất trong đề (ASEAN, Đông Nam Á, Chiến tranh lạnh...)
+        seen = {}
+        for q in questions:
+            for t in [q.text] + [o["text"] for o in q.opts]:
+                for w in re.findall(r"\w+", t)[1:]:  # bỏ từ đầu câu (luôn viết hoa)
+                    seen.setdefault(w.lower(), Counter())[w] += 1
+        def recase(m):
+            w = m.group(0)
+            forms = seen.get(w.lower())
+            return forms.most_common(1)[0][0] if forms else w.lower()
+        subtitle = re.sub(r"\w+", recase, subtitle)
         subtitle = subtitle[:1].upper() + subtitle[1:]
 
     out, problems, seen = [], [], set()
