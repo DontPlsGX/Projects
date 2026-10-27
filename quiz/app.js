@@ -54,11 +54,11 @@
     replace(v) { if (!framed) try { history.replaceState({ v }, ""); } catch { /* bỏ qua */ } },
   };
   function show(view) {
-    for (const v of ["home", "quiz", "result"]) $(v).hidden = v !== view;
+    for (const v of ["home", "quiz", "result", "key"]) $(v).hidden = v !== view;
     window.scrollTo(0, 0);
   }
   window.addEventListener("popstate", () => {
-    if (!$("quiz").hidden || !$("result").hidden) { clearTimeout(autoTimer); goHome(false); }
+    if (!$("quiz").hidden || !$("result").hidden || !$("key").hidden) { clearTimeout(autoTimer); goHome(false); }
   });
 
   // ---------- Tải dữ liệu ----------
@@ -269,8 +269,8 @@
     $("qLesson").textContent = q.lessonTitle;
     $("qLesson").hidden = lessons.length < 2;
     const tf = isTF(q);
-    $("qCtx").hidden = !tf || !q.ctx;
-    const ctx = tf ? q.ctx || "" : "";
+    $("qCtx").hidden = !q.ctx;
+    const ctx = q.ctx || "";
     if ($("qCtx").textContent !== ctx) { $("qCtx").textContent = ctx; $("qCtx").scrollTop = 0; }
     $("qKind").hidden = !tf;
     if (tf) $("qKind").textContent = `Câu ${parseInt(q.n, 10)} · ý ${String(q.n).slice(-1)} — Đúng hay Sai?`;
@@ -409,7 +409,7 @@
       const q = Q[r.id];
       const c = el("div", "wcard");
       c.append(el("span", "wn", q.lessonTitle + (q.n ? (isTF(q) ? ` · Đúng/Sai câu ${q.n}` : ` · Câu ${q.n}`) : "")));
-      if (isTF(q) && q.ctx) {
+      if (q.ctx) {
         const d = el("details"); d.append(el("summary", null, "Xem tư liệu"), el("div", "ctx", q.ctx));
         c.append(d);
       }
@@ -432,4 +432,50 @@
     renderHome();
   }
   $("goHome").addEventListener("click", () => goHome());
+
+  // ---------- Bảng đáp án ----------
+  let keyTab = "mc";
+  function renderKey() {
+    $("keyTabs").hidden = !hasTF;
+    $("keyTabs").querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", b.dataset.v === keyTab));
+    const list = $("keyList");
+    list.textContent = "";
+    for (const l of lessons) {
+      if (lessons.length > 1) list.append(el("h2", null, l.title));
+      const qs = l.questions.filter((q) => (keyTab === "tf") === isTF(q) || !hasTF);
+      if (keyTab === "tf" && hasTF) {
+        const groups = new Map();
+        for (const q of qs) { const k = parseInt(q.n, 10); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(q); }
+        for (const [n, items] of groups) {
+          const c = el("div", "wcard");
+          c.append(el("span", "wn", `Câu ${n} · Đúng/Sai`));
+          if (items[0].ctx) { const d = el("details"); d.append(el("summary", null, "Xem tư liệu"), el("div", "ctx", items[0].ctx)); c.append(d); }
+          for (const q of items) {
+            const ok = q.a === 0;
+            const r = el("div", "tfrow " + (ok ? "t" : "f"));
+            r.append(el("span", "pill " + (ok ? "ok" : "bad"), ok ? "Đúng" : "Sai"), el("span", null, `${String(q.n).slice(-1)}. ${q.q}`));
+            c.append(r);
+          }
+          list.append(c);
+        }
+      } else {
+        for (const q of qs) {
+          const c = el("div", "wcard");
+          c.append(el("span", "wn", `Câu ${q.n} · Đáp án ${LETTERS[q.a]}`));
+          if (q.ctx) { const d = el("details"); d.append(el("summary", null, "Xem tư liệu"), el("div", "ctx", q.ctx)); c.append(d); }
+          c.append(el("p", "wq", q.q));
+          const ul = el("ul", "kopts");
+          q.o.forEach((o, i) => { const li = el("li", i === q.a ? "right" : ""); li.append(el("b", null, LETTERS[i]), el("span", null, o)); ul.append(li); });
+          c.append(ul);
+          list.append(c);
+        }
+      }
+    }
+  }
+  $("openKey").addEventListener("click", () => {
+    keyTab = settings.kind === "tf" ? "tf" : "mc";
+    nav.push("key"); show("key"); renderKey();
+  });
+  $("keyTabs").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { keyTab = b.dataset.v; renderKey(); window.scrollTo(0, 0); }));
+  $("keyBack").addEventListener("click", () => goHome());
 })();
