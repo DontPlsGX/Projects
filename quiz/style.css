@@ -321,6 +321,19 @@ h2 { font-size: 17px; font-weight: 700; }
 .ans.yours .tx { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 60%, transparent); }
 .ans.right { background: var(--ok-soft); }
 .ans.right .lb { color: var(--ok); }
+.key-tabs { align-self: flex-start; }
+.key-tabs button { padding: 8px 14px; }
+#key { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+#key .topbar h2 { font-size: 19px; }
+.kopts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.kopts li { display: flex; gap: 10px; padding: 7px 10px; border-radius: 10px; font-size: 15px; }
+.kopts li b { flex: none; width: 18px; color: var(--muted); }
+.kopts li.right { background: var(--ok-soft); }
+.kopts li.right b { color: var(--ok); }
+.tfrow { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 15px; margin-top: 6px; }
+.tfrow .pill { flex: none; font-weight: 700; font-size: 13px; min-width: 56px; justify-content: center; }
+.tfrow.t { background: var(--ok-soft); }
+.tfrow.f { background: var(--bad-soft); }
 .perfect { text-align: center; padding: 20px; color: var(--muted); }
 
 @media (min-width: 640px) {

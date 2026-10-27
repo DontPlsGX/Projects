@@ -223,6 +223,8 @@ def para_line(p, numbering, cell=None):
             text += lab
             flags += [frozenset()] * len(lab)
     for r in p._p.iter(W("r")):
+        if any(a.tag.endswith("}Fallback") for a in r.iterancestors()):
+            continue  # bản sao dự phòng của hộp văn bản/sơ đồ
         run = Run(r, p)
         t = nfc(run.text).replace("\t", " ").replace("\n", " ")
         if not t:
@@ -265,10 +267,11 @@ OPT_START_RE = re.compile(r"^\s*\*?\s*([A-Ha-h])\s*[.):/]\s*")
 ANS_RE = re.compile(r"^\s*[\[(]?\s*(?:đáp\s*án(?:\s*đúng)?|đa|answer|chọn|=>|→)\s*[:.\-–]?\s*([A-Ha-h])\b\s*[\])]?\s*\.?\s*$", re.I)
 KEY_HEADER_RE = re.compile(r"^\s*(?:bảng\s*)?đáp\s*án\s*(?:tham\s*khảo|trắc\s*nghiệm)?\s*[:.]?\s*", re.I)
 PAIR_RE = re.compile(r"(?<!\d)(\d{1,3})\s*[.\-:)]?\s*([A-Ha-h])(?![A-Za-zÀ-ỹ])")
-TF_HEADER_RE = re.compile(r"^\s*phần\s+(?:ii|2)\b.*đúng\s*[-–]+\s*sai|^\s*(?:phần\s+\S+\.?\s*)?(?:trắc\s*nghiệm\s*)?(?:lựa\s*chọn\s*)?đúng\s*[-–]+\s*sai\s*$", re.I)
+TF_HEADER_RE = re.compile(r"^\s*phần\s+(?:ii|2)\b.*đúng\s*[-–]*\s*sai|^\s*(?:phần\s+\S+\.?\s*)?(?:trắc\s*nghiệm\s*)?(?:lựa\s*chọn\s*)?đúng\s*[-–]+\s*sai\s*$", re.I)
 TF_ITEM_RE = re.compile(r"^\s*([a-dA-D])\s*[.)]\s*")
 TF_BLANK_RE = re.compile(r"^[\sa-dA-D.)…_:\-]*$")
-TITLE_RE = re.compile(r"^\s*(bài\s*\d+)\s*[:.\-–]?\s*(.*)$", re.I)
+TITLE_RE = re.compile(r"^\s*((?:bài|chủ\s*đề)\s*\d+)\s*[:.\-–]?\s*(.*)$", re.I)
+SHARED_RE = re.compile(r"trả\s*lời.*?từ\s*(?:câu\s*)?(\d+)\s*(?:đến|tới|-|–)\s*(?:câu\s*)?(\d+)", re.I)
 
 
 def split_options(text, first_letter="A"):
@@ -284,7 +287,7 @@ def split_options(text, first_letter="A"):
         if not nxt:
             break
         L = nxt.lower() if lower else nxt
-        mm = re.compile(r"(?:(?<=\s)|(?<=[;,.]))\*?\s*(" + L + r")\s*[.):/]\s+").search(text, pos)
+        mm = re.compile(r"(?:(?<=\s)|(?<=[;,.]))\*?\s*(" + L + r")\s*[.):/](?:\s+|(?=\d))").search(text, pos)
         if not mm:
             break
         spans.append((nxt, mm.start(1), mm.end()))
@@ -339,12 +342,13 @@ def parse_lines(lines):
     questions, preamble, key, pending_key_cells = [], [], {}, []
     groups, g, tf = [], None, False
     cur, in_key = None, False
+    shared, collecting = [], None   # [(từ câu, đến câu, [dòng tư liệu])]
     for line in lines:
         t = line.text
         s = t.strip()
         if not s:
             continue
-        if not in_key and TF_HEADER_RE.search(s) and is_heading(s):
+        if not in_key and TF_HEADER_RE.search(s) and (is_heading(s) or re.match(r"\s*phần\b", s, re.I)):
             tf, cur = True, None
             continue
         if tf and not in_key:
@@ -400,8 +404,17 @@ def parse_lines(lines):
                 key[int(n)] = l.upper()
             continue
 
+        msh = SHARED_RE.search(s)
+        if msh and not Q_RE.match(t):
+            collecting = (int(msh.group(1)), int(msh.group(2)), [])
+            shared.append(collecting)
+            continue
         mq = Q_RE.match(t)
         mn = NUM_RE.match(t) if not mq else None
+        if collecting is not None and not mq:
+            collecting[2].append((t, line.cell))
+            continue
+        collecting = None
         if mq or (mn and (cur is None or len(cur.opts) >= 2)):
             m = mq or mn
             num = int(m.group(1))
@@ -452,7 +465,7 @@ def parse_lines(lines):
                     all(re.fullmatch(r"[A-Ha-h]", b[c].strip(" .")) for c in cols):
                 for c in cols:
                     key[int(a[c].strip(" ."))] = b[c].strip(" .").upper()
-    return questions, preamble, key, groups
+    return questions, preamble, key, groups, shared
 
 
 def passage_text(parts):
@@ -480,20 +493,59 @@ def passage_text(parts):
     return "\n".join(l for l in out if l)
 
 
-def tf_questions(lesson_id, groups, problems):
+def read_sidecar(path):
+    """Đáp án đi kèm: '<tên file>.dapan.txt' cạnh file .docx.
+
+    1 D            -> câu trắc nghiệm 1, đáp án D
+    ĐS 3: S Đ Đ S  -> câu Đúng/Sai 3, các ý a b c d
+    Tư liệu ĐS 1: <đoạn văn>  -> thay đoạn tư liệu (vd sơ đồ không đọc được)
+    Dòng bắt đầu bằng # là ghi chú.
+    """
+    mc, tf, ctx = {}, {}, {}
+    f = path.with_name(path.stem + ".dapan.txt")
+    if not f.exists():
+        return None
+    for raw in f.read_text("utf-8").splitlines():
+        line = nfc(raw).strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"(?i)^tư\s*liệu\s*(?:đ/?s|ds|tf)\s*(\d+)\s*:\s*(.+)$", line)
+        if m:
+            ctx[int(m.group(1))] = m.group(2).replace("\\n", "\n").strip()
+            continue
+        m = re.match(r"(?i)^(?:đ/?s|ds|tf)\s*(\d+)\s*[:.]?\s*(.+)$", line)
+        if m:
+            tf[int(m.group(1))] = [0 if c in "ĐđDd" else 1 for c in re.findall(r"[ĐđDdSs]", m.group(2))]
+            continue
+        m = re.match(r"^(\d{1,3})\s*[.:)\-]?\s*([A-Ha-h])\b", line)
+        if m:
+            mc[int(m.group(1))] = m.group(2).upper()
+    return {"mc": mc, "tf": tf, "ctx": ctx}
+
+
+def tf_questions(lesson_id, groups, problems, side=None):
     # cờ đánh dấu ý Đúng: định dạng xuất hiện ở chữ cái của một số ý (vd chữ màu)
     used = [f for f in ("color", "hl", "u", "b", "i")
             if any(f in it[2] or f in it[3] for gr in groups for it in gr.items)
             and not all(f in it[2] or f in it[3] for gr in groups for it in gr.items)]
     flag = used[0] if used else None
+    if side and side["tf"]:
+        flag = None  # có file đáp án: không đoán theo định dạng
     out = []
     for gr in groups:
         ctx = "\n".join(x for x in (clean(gr.intro), passage_text(gr.passage)) if x)
+        if side and gr.num in side["ctx"]:
+            ctx = "\n".join(x for x in (clean(gr.intro), side["ctx"][gr.num]) if x)
+        keyed = side["tf"].get(gr.num) if side else None
+        if keyed is not None and len(keyed) != len(gr.items):
+            problems.append("Câu %d (Đúng/Sai): file đáp án có %d ý, đề có %d ý" % (gr.num, len(keyed), len(gr.items)))
         if not gr.items:
             problems.append("Câu %d (Đúng/Sai): không tìm thấy các ý a, b, c, d" % gr.num)
             continue
-        for letter, text, lab, body in gr.items:
+        for k, (letter, text, lab, body) in enumerate(gr.items):
             truth = None if flag is None else (0 if (flag in lab or flag in body) else 1)
+            if keyed is not None and k < len(keyed):
+                truth = keyed[k]
             if truth is None:
                 problems.append("Câu %d%s (Đúng/Sai): chưa xác định được đáp án" % (gr.num, letter))
             st = clean(text)
@@ -527,8 +579,9 @@ def qid(lesson_id, text):
 
 def convert_file(path):
     doc = Document(str(path))
-    questions, preamble, key, groups = parse_lines(iter_lines(doc))
+    questions, preamble, key, groups, shared = parse_lines(iter_lines(doc))
     lesson_id = slug(path.stem)
+    side = read_sidecar(path)
 
     title, subtitle = None, ""
     for s in preamble[:6]:
@@ -541,7 +594,10 @@ def convert_file(path):
         title = m.group(1) if m else nfc(path.stem).strip(" .")
     title = re.sub(r"\s+", " ", title).strip().capitalize()
     if subtitle and is_heading(subtitle):
+        caps = {w for q in questions for w in re.findall(r"\b[A-ZĐ]{2,}\b", q.text)}
         subtitle = subtitle.capitalize()
+        subtitle = " ".join(w.upper() if w.upper() in caps else w for w in subtitle.split(" "))
+        subtitle = subtitle[:1].upper() + subtitle[1:]
 
     out, problems, seen = [], [], set()
     for idx, q in enumerate(questions):
@@ -552,7 +608,9 @@ def convert_file(path):
             problems.append("%s: không tìm thấy đủ đáp án (%d) – %s" % (label, len(opts), text[:60]))
             continue
         ans, how = None, None
-        if q.answer and q.answer in LETTERS[: len(opts)]:
+        if side and side["mc"].get(q.num) in LETTERS[: len(opts)]:
+            ans, how = LETTERS.index(side["mc"][q.num]), "file đáp án"
+        elif q.answer and q.answer in LETTERS[: len(opts)]:
             ans, how = LETTERS.index(q.answer), "dòng 'Đáp án'"
         elif q.num in key and key[q.num] in LETTERS[: len(opts)]:
             ans, how = LETTERS.index(key[q.num]), "bảng đáp án"
@@ -568,8 +626,12 @@ def convert_file(path):
         while i in seen:
             i = qid(lesson_id, i)
         seen.add(i)
-        out.append({"id": i, "n": q.num, "q": text, "o": opts, "a": ans})
-    out += tf_questions(lesson_id, groups, problems)
+        item = {"id": i, "n": q.num, "q": text, "o": opts, "a": ans}
+        for lo, hi, parts in shared:
+            if lo <= q.num <= hi and parts:
+                item["ctx"] = passage_text(parts)
+        out.append(item)
+    out += tf_questions(lesson_id, groups, problems, side)
     return {
         "id": lesson_id,
         "title": title,
