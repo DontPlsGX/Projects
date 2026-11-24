@@ -276,15 +276,16 @@ def render():
     tex2 = np.zeros((H, W), np.float32); tex2[idx] = sample_eq(eq_noise2, la, lo)
 
     ndl = (N @ L).astype(np.float32)
-    day = smoothstep(-0.10, 0.22, ndl)
+    day = smoothstep(-0.16, 0.28, ndl)
     diffuse = np.clip(ndl, 0, 1) ** 0.85
 
     # ocean
-    ocean_t = 0.04 + 0.92 * diffuse
+    ocean_t = 0.06 + 0.82 * diffuse + 0.14 * (tex2 - 0.5)
     ocean = ramp(ocean_t, [(0, NAVY_1 * 0.8), (0.4, NAVY_2), (0.8, BLUE_3), (1.0, mix(BLUE_3, BLUE_4, 0.5))])
     ocean = mix(ocean, mix(BLUE_3, BLUE_4, 0.7), (shf ** 1.4) * 0.6 * day)  # shallow shelves
     # brush streaks in water + deeper tone far from the coasts
-    ocean *= (1 - 0.22 * smoothstep(0.5, 9.0, off))[..., None]
+    ocean *= (0.90 + 0.20 * tex2)[..., None]
+    ocean *= (1 - 0.15 * smoothstep(0.5, 9.0, off))[..., None]
 
     # engraved ocean layers (kept faint): bathymetric contours that echo every coastline,
     # and long flowing current lines across the open sea
@@ -296,17 +297,17 @@ def render():
     vis = 0.35 + 0.65 * day
     bathy = contour(off, 1.1, 0.7) * np.exp(-off / 3.2) * (off > 0.25)
     flow = contour(cur, 0.035, 0.7) * smoothstep(0.6, 2.5, off)
-    ocean_lines = (bathy * 0.21 + flow * 0.15) * sea * vis * nz ** 0.6
+    ocean_lines = (bathy * 0.0 + flow * 0.0) * sea * vis * nz ** 0.6
     # dotted mid-ocean texture (very light halftone, grows with depth)
     gs = 9 * SCALE * 2
     dots = (np.sin(xx * np.pi / gs) * np.sin(yy * np.pi / gs)) ** 2
-    dots = smoothstep(0.80, 0.97, dots) * smoothstep(3.0, 12.0, off) * sea * 0.05 * vis
+    dots = smoothstep(0.80, 0.97, dots) * smoothstep(3.0, 12.0, off) * sea * 0.0 * vis
 
     # land: cream -> sand -> gold with inland relief and painterly mottling
     relief = np.clip(0.55 * inl + 0.6 * (tex - 0.5) + 0.25, 0, 1)
     land_lit = ramp(relief, [(0, CREAM), (0.35, PEACH), (0.65, SAND), (1, GOLD)])
     land_lit = mix(land_lit, GOLD_D, smoothstep(0.62, 0.95, tex) * 0.35)
-    shade = 0.22 + 1.12 * diffuse
+    shade = 0.26 + 1.05 * diffuse
     land_col = land_lit * shade[..., None]
     land_col = mix(land_col, BRONZE * 0.7, (1 - day) * 0.0)
 
@@ -366,7 +367,7 @@ def render():
     nightness = (1 - smoothstep(-0.22, 0.10, ndl)) * nz ** 0.4
     core = 1.9 * (1 - np.exp(-lights_core * 2.4 * sp * sp))
     mid = 0.9 * (1 - np.exp(-lights_mid * 3.0 * sp * sp))
-    glow = 0.45 * (1 - np.exp(-lights_glow * 6.0 * sp * sp))
+    glow = 0.6 * (1 - np.exp(-lights_glow * 6.0 * sp * sp))
     surf += (core * nightness)[..., None] * mix(CREAM, PEACH, 0.3)
     surf += (mid * nightness)[..., None] * mix(SAND, ORANGE, 0.25) * 0.8
     surf += (glow * nightness)[..., None] * mix(ORANGE, ORANGE_D, 0.4) * 0.45
@@ -377,6 +378,7 @@ def render():
     cloud_col = mix(mix(BLUE_5, CREAM, 0.6), PEACH, smoothstep(0.1, 0.0, ndl) * 0.0)
     cloud_lit = (0.18 + 0.9 * diffuse)[..., None] * cloud_col
     cloud_lit += (0.6 * term)[..., None] * ORANGE * cl_[..., None]
+    surf = mix(surf, cloud_lit, cl_ * 0.32 * smoothstep(-0.25, 0.15, ndl))
 
 
     # limb darkening + fresnel atmosphere inside the disk
@@ -384,7 +386,7 @@ def render():
     lit_side = smoothstep(-0.4, 0.6, ndl)
     surf *= (0.55 + 0.45 * nz ** 0.35)[..., None]
     fres = (1 - nz) ** 3.4
-    atm_in = mix(BLUE_3, BLUE_4, lit_side) * (fres * (0.06 + 0.85 * lit_side) * (1 - 0.5 * land))[..., None]
+    atm_in = mix(BLUE_3, BLUE_4, lit_side) * (fres * (0.15 + 0.7 * lit_side) * (1 - 0.5 * land))[..., None]
     surf += atm_in
 
     img = mix(img, surf, aa)
@@ -398,28 +400,29 @@ def render():
     thin = np.exp(-np.clip(d, 0, None) / (10 * SCALE * 2)) * outside
     wide = np.exp(-np.clip(d, 0, None) / (90 * SCALE * 2)) * outside
     huge = np.exp(-np.clip(d, 0, None) / (380 * SCALE * 2)) * outside
-    img += (0.8 * thin * (0.25 + facing ** 1.5))[..., None] * BLUE_5
-    img += (0.26 * wide * (0.1 + facing ** 2))[..., None] * BLUE_4
+    img += (1.05 * thin * (0.25 + facing ** 1.5))[..., None] * BLUE_5
+    img += (0.38 * wide * (0.1 + facing ** 2))[..., None] * BLUE_4
     img += (0.12 * huge * (0.2 + facing))[..., None] * BLUE_3
     # bright inner rim line on the lit side
     rim = np.exp(-((rr - 0.997) * R / (3.5 * SCALE * 2)) ** 2)
-    img += (rim * facing ** 2 * 0.5)[..., None] * mix(BLUE_5, CREAM, 0.4)
+    img += (rim * facing ** 2 * 0.85)[..., None] * mix(BLUE_5, CREAM, 0.4)
     # sunrise crescent: the limb nearest the sun burns warm orange -> cream
     sun_ang = np.arctan2(sun_dir2d[1], sun_dir2d[0])
     dang = np.angle(np.exp(1j * (np.arctan2(ny, nx) - sun_ang)))
     near_sun = np.exp(-(dang / 0.55) ** 2)
     crescent = np.exp(-((rr - 0.995) * R / (9 * SCALE * 2)) ** 2) + 0.5 * np.exp(-((rr - 1.0) * R / (30 * SCALE * 2)) ** 2)
-    img += (crescent * near_sun * 0.45)[..., None] * mix(ORANGE, PEACH, near_sun)
+    img += (crescent * near_sun * 0.8)[..., None] * mix(ORANGE, PEACH, near_sun)
 
     # sun peeking over the limb: warm flare
     sun = np.array([CX + R * sun_dir2d[0] * 1.0, CY - R * sun_dir2d[1] * 1.0])
     ds = np.sqrt((xx - sun[0]) ** 2 + (yy - sun[1]) ** 2) / (R)
-    flare = np.exp(-ds / 0.025) * 0.9 + np.exp(-ds / 0.09) * 0.32 + np.exp(-ds / 0.35) * 0.12
+    flare = np.exp(-ds / 0.03) * 1.5 + np.exp(-ds / 0.10) * 0.55 + np.exp(-ds / 0.35) * 0.26 + np.exp(-ds / 0.9) * 0.07
     occl = np.where(inside, 0.35 + 0.65 * smoothstep(0.93, 1.0, rr), 1.0)
     img += mix(ORANGE, PEACH, np.clip(np.exp(-ds / 0.04), 0, 1)) * (flare * occl)[..., None]
     # anamorphic streak (very subtle)
     streak = np.exp(-((yy - sun[1]) / (5 * SCALE * 2)) ** 2) * np.exp(-np.abs(xx - sun[0]) / (W * 0.22))
     streak = np.exp(-((yy - sun[1]) / (3 * SCALE * 2)) ** 2) * np.exp(-np.abs(xx - sun[0]) / (W * 0.08))
+    img += (streak * 0.18)[..., None] * mix(ORANGE, PEACH, 0.6)
 
 
     # ---------- connection arcs ----------
@@ -439,13 +442,13 @@ def render():
     lum = img.mean(-1)
     bright = np.clip(img - 0.75, 0, None) * smoothstep(0.75, 1.3, lum)[..., None]
     bloom = np.stack([ndimage.gaussian_filter(bright[..., c], 18 * SCALE * 2) for c in range(3)], -1)
-    img += bloom * 0.3
+    img += bloom * 0.6
 
     # gentle contrast + saturation lift
     lum = img @ np.array([0.2126, 0.7152, 0.0722], np.float32)
-    img = lum[..., None] + (img - lum[..., None]) * 1.22
+    img = lum[..., None] + (img - lum[..., None]) * 1.30
     img = np.clip(img, 0, None)
-    img = img ** 1.14
+    img = img ** 1.16
 
     # filmic tone map (soft shoulder keeps highlights from clipping)
     img = 1 - np.exp(-img * 1.6)
@@ -580,7 +583,7 @@ def render_orbit():
     dx, dy = x[-1] - x[-40], y[-1] - y[-40]
     f = np.array([dx, dy]) / np.hypot(dx, dy)
     nrm = np.array([-f[1], f[0]])
-    sz = 150 * sp  # px at final size
+    sz = 98 * sp  # px at final size
     TAIL = (-0.40, -0.05)
     cx0 = hx - (f[0] * TAIL[0] + nrm[0] * TAIL[1]) * sz
     cy0 = hy - (f[1] * TAIL[0] + nrm[1] * TAIL[1]) * sz
