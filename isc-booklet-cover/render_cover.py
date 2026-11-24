@@ -565,6 +565,7 @@ def render_orbit():
         a = 0.38 + 0.62 * p ** 1.3
         c = ramp(np.array(p), [(0, GOLD_D), (0.4, ORANGE), (0.8, SAND), (1, CREAM)])
         wdt = (3.2 + 9.5 * p ** 1.5) * (0.75 + 0.25 * (z[k] + 1)) * sp * ss
+        wdt *= 1 - 0.55 * smoothstep(0.95, 1.0, p)  # taper into the plane's tail
         px, py = x[k] * ss, y[k] * ss
         stamp(dl, px, py, wdt, col(c, a))
         if p > 0.55:  # hot white core on the leading stretch
@@ -583,8 +584,8 @@ def render_orbit():
     dx, dy = x[-1] - x[-40], y[-1] - y[-40]
     f = np.array([dx, dy]) / np.hypot(dx, dy)
     nrm = np.array([-f[1], f[0]])
-    sz = 98 * sp  # px at final size
-    TAIL = (-0.40, -0.05)
+    sz = 112 * sp  # px at final size
+    TAIL = (-0.42, -0.035)
     cx0 = hx - (f[0] * TAIL[0] + nrm[0] * TAIL[1]) * sz
     cy0 = hy - (f[1] * TAIL[0] + nrm[1] * TAIL[1]) * sz
     box = int(sz * 2.6)
@@ -601,7 +602,8 @@ def render_orbit():
         s0, s1, s2 = side(p0, p1), side(p1, p2), side(p2, p0)
         return (((s0 >= 0) & (s1 >= 0) & (s2 >= 0)) | ((s0 <= 0) & (s1 <= 0) & (s2 <= 0))).astype(np.float32)
 
-    NOSE, WL, C, K, WR = (1.0, 0.0), (-0.80, -0.98), (-0.40, -0.05), (-0.60, 0.20), (-0.78, 0.56)
+    # flattened, banked silhouette: wings foreshortened as if seen almost edge-on mid-turn
+    NOSE, WL, C, K, WR = (1.0, 0.0), (-0.88, -0.42), (-0.42, -0.035), (-0.62, 0.075), (-0.80, 0.20)
     top, keel, low = tri(NOSE, WL, C), tri(NOSE, C, K), tri(NOSE, K, WR)
     keel *= 1 - top
     low *= (1 - top) * (1 - keel)
