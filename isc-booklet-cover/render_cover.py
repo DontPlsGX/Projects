@@ -105,11 +105,15 @@ def land_textures():
     # distance in pixels at 15 px/deg
     din = ndimage.distance_transform_edt(small).astype(np.float32)
     dout = ndimage.distance_transform_edt(~small).astype(np.float32)
+    lab, nlab = ndimage.label(small)
+    sizes = ndimage.sum(small, lab, np.arange(1, nlab + 1))
+    major = np.isin(lab, np.nonzero(sizes > 2500)[0] + 1)
+    dmaj = ndimage.distance_transform_edt(~major).astype(np.float32)
     inland = np.clip(din / 120.0, 0, 1)  # 0 at coast -> 1 deep inland (~8 deg)
     shelf = np.exp(-dout / 10.0)  # 1 at coast, fades over ~0.7 deg
     inland = ndimage.zoom(inland, 2, order=1)
     shelf = ndimage.zoom(shelf, 2, order=1)
-    offshore = ndimage.zoom(dout / 15.0, 2, order=1).astype(np.float32)  # degrees from nearest coast
+    offshore = ndimage.zoom(ndimage.gaussian_filter(dmaj, 2.0) / 15.0, 2, order=1).astype(np.float32)  # deg from major coasts
     np.savez_compressed(p, cov=cov, inland=inland, shelf=shelf, offshore=offshore)
     return cov, inland, shelf, offshore
 
@@ -241,7 +245,7 @@ def render():
     bigs = np.zeros((H, W), np.float32)
     sel = mag > 0.35
     bigs[sy[sel].astype(int), sx[sel].astype(int)] = mag[sel]
-    starglow = ndimage.gaussian_filter(bigs, 2.2 * SCALE * 2) * 18
+    starglow = ndimage.gaussian_filter(bigs, 2.2 * SCALE * 2) * 7
     star = ndimage.gaussian_filter(star, 0.6 * SCALE * 2) * 3 + starglow
     tint = mix(BLUE_5, PEACH, (rng.random((H, W)) > 0.6).astype(np.float32) * 0.0 + neb2)
     img += star[..., None] * tint * (1 - inside[..., None])
@@ -276,11 +280,10 @@ def render():
     diffuse = np.clip(ndl, 0, 1) ** 0.85
 
     # ocean
-    ocean_t = 0.04 + 0.92 * diffuse + 0.12 * (tex2 - 0.5)
+    ocean_t = 0.04 + 0.92 * diffuse
     ocean = ramp(ocean_t, [(0, NAVY_1 * 0.8), (0.4, NAVY_2), (0.8, BLUE_3), (1.0, mix(BLUE_3, BLUE_4, 0.5))])
     ocean = mix(ocean, mix(BLUE_3, BLUE_4, 0.7), (shf ** 1.4) * 0.6 * day)  # shallow shelves
     # brush streaks in water + deeper tone far from the coasts
-    ocean *= (0.92 + 0.16 * tex2)[..., None]
     ocean *= (1 - 0.22 * smoothstep(0.5, 9.0, off))[..., None]
 
     # engraved ocean layers (kept faint): bathymetric contours that echo every coastline,
@@ -362,8 +365,8 @@ def render():
     lights_glow = ndimage.gaussian_filter(lights, 7.0 * sp)
     nightness = (1 - smoothstep(-0.22, 0.10, ndl)) * nz ** 0.4
     core = 1.9 * (1 - np.exp(-lights_core * 2.4 * sp * sp))
-    mid = 1.2 * (1 - np.exp(-lights_mid * 3.0 * sp * sp))
-    glow = 0.9 * (1 - np.exp(-lights_glow * 6.0 * sp * sp))
+    mid = 0.9 * (1 - np.exp(-lights_mid * 3.0 * sp * sp))
+    glow = 0.45 * (1 - np.exp(-lights_glow * 6.0 * sp * sp))
     surf += (core * nightness)[..., None] * mix(CREAM, PEACH, 0.3)
     surf += (mid * nightness)[..., None] * mix(SAND, ORANGE, 0.25) * 0.8
     surf += (glow * nightness)[..., None] * mix(ORANGE, ORANGE_D, 0.4) * 0.45
@@ -374,7 +377,7 @@ def render():
     cloud_col = mix(mix(BLUE_5, CREAM, 0.6), PEACH, smoothstep(0.1, 0.0, ndl) * 0.0)
     cloud_lit = (0.18 + 0.9 * diffuse)[..., None] * cloud_col
     cloud_lit += (0.6 * term)[..., None] * ORANGE * cl_[..., None]
-    surf = mix(surf, cloud_lit, cl_ * 0.30 * smoothstep(-0.25, 0.15, ndl))
+
 
     # limb darkening + fresnel atmosphere inside the disk
     fres = (1 - nz) ** 2.6
@@ -395,29 +398,29 @@ def render():
     thin = np.exp(-np.clip(d, 0, None) / (10 * SCALE * 2)) * outside
     wide = np.exp(-np.clip(d, 0, None) / (90 * SCALE * 2)) * outside
     huge = np.exp(-np.clip(d, 0, None) / (380 * SCALE * 2)) * outside
-    img += (1.1 * thin * (0.25 + facing ** 1.5))[..., None] * BLUE_5
-    img += (0.40 * wide * (0.1 + facing ** 2))[..., None] * BLUE_4
+    img += (0.8 * thin * (0.25 + facing ** 1.5))[..., None] * BLUE_5
+    img += (0.26 * wide * (0.1 + facing ** 2))[..., None] * BLUE_4
     img += (0.12 * huge * (0.2 + facing))[..., None] * BLUE_3
     # bright inner rim line on the lit side
     rim = np.exp(-((rr - 0.997) * R / (3.5 * SCALE * 2)) ** 2)
-    img += (rim * facing ** 2 * 0.9)[..., None] * mix(BLUE_5, CREAM, 0.4)
+    img += (rim * facing ** 2 * 0.5)[..., None] * mix(BLUE_5, CREAM, 0.4)
     # sunrise crescent: the limb nearest the sun burns warm orange -> cream
     sun_ang = np.arctan2(sun_dir2d[1], sun_dir2d[0])
     dang = np.angle(np.exp(1j * (np.arctan2(ny, nx) - sun_ang)))
     near_sun = np.exp(-(dang / 0.55) ** 2)
     crescent = np.exp(-((rr - 0.995) * R / (9 * SCALE * 2)) ** 2) + 0.5 * np.exp(-((rr - 1.0) * R / (30 * SCALE * 2)) ** 2)
-    img += (crescent * near_sun * 0.9)[..., None] * mix(ORANGE, PEACH, near_sun)
+    img += (crescent * near_sun * 0.45)[..., None] * mix(ORANGE, PEACH, near_sun)
 
     # sun peeking over the limb: warm flare
     sun = np.array([CX + R * sun_dir2d[0] * 1.0, CY - R * sun_dir2d[1] * 1.0])
     ds = np.sqrt((xx - sun[0]) ** 2 + (yy - sun[1]) ** 2) / (R)
-    flare = np.exp(-ds / 0.03) * 1.8 + np.exp(-ds / 0.10) * 0.7 + np.exp(-ds / 0.35) * 0.35 + np.exp(-ds / 0.9) * 0.10
+    flare = np.exp(-ds / 0.025) * 0.9 + np.exp(-ds / 0.09) * 0.32 + np.exp(-ds / 0.35) * 0.12
     occl = np.where(inside, 0.35 + 0.65 * smoothstep(0.93, 1.0, rr), 1.0)
     img += mix(ORANGE, PEACH, np.clip(np.exp(-ds / 0.04), 0, 1)) * (flare * occl)[..., None]
     # anamorphic streak (very subtle)
     streak = np.exp(-((yy - sun[1]) / (5 * SCALE * 2)) ** 2) * np.exp(-np.abs(xx - sun[0]) / (W * 0.22))
     streak = np.exp(-((yy - sun[1]) / (3 * SCALE * 2)) ** 2) * np.exp(-np.abs(xx - sun[0]) / (W * 0.08))
-    img += (streak * 0.30)[..., None] * mix(ORANGE, PEACH, 0.6)
+
 
     # ---------- connection arcs ----------
     arcs = render_arcs()
@@ -436,7 +439,7 @@ def render():
     lum = img.mean(-1)
     bright = np.clip(img - 0.75, 0, None) * smoothstep(0.75, 1.3, lum)[..., None]
     bloom = np.stack([ndimage.gaussian_filter(bright[..., c], 18 * SCALE * 2) for c in range(3)], -1)
-    img += bloom * 0.9
+    img += bloom * 0.3
 
     # gentle contrast + saturation lift
     lum = img @ np.array([0.2126, 0.7152, 0.0722], np.float32)
@@ -500,13 +503,13 @@ def render_arcs():
             c = c_a * (1 - tt) + c_b * tt
             seg = [(x[k] * ss, y[k] * ss), (x[k + 1] * ss, y[k + 1] * ss)]
             dr.line(seg, fill=col(c, a), width=lw)
-            dg.line(seg, fill=col(c, a * 0.9), width=lw * 4)
+            dg.line(seg, fill=col(c, a * 0.3), width=lw * 3)
         # destination node
         if visible[-1]:
             ex, ey = x[-1] * ss, y[-1] * ss
             rad = 5 * SCALE * 2 * ss
             dr.ellipse([ex - rad, ey - rad, ex + rad, ey + rad], fill=col(CREAM, 1))
-            dg.ellipse([ex - rad * 3, ey - rad * 3, ex + rad * 3, ey + rad * 3], fill=col(ORANGE, 0.8))
+
             ring = rad * 2.6
             dr.ellipse([ex - ring, ey - ring, ex + ring, ey + ring], outline=col(PEACH, 0.55), width=max(1, lw // 2))
 
@@ -524,7 +527,7 @@ def render_arcs():
     glow = glow.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(10 * SCALE * 2))
     a = np.asarray(big, np.float32) / 255
     g = np.asarray(glow, np.float32) / 255
-    rgb = a[..., :3] * a[..., 3:4] * 1.3 + g[..., :3] * g[..., 3:4] * 0.9
+    rgb = a[..., :3] * a[..., 3:4] * 1.15 + g[..., :3] * g[..., 3:4] * 0.7
     return np.concatenate([rgb, a[..., 3:4]], -1)
 
 
@@ -563,13 +566,13 @@ def render_orbit():
         stamp(dl, px, py, wdt, col(c, a))
         if p > 0.55:  # hot white core on the leading stretch
             stamp(dl, px, py, wdt * 0.38, col(CREAM, ((p - 0.55) / 0.45) ** 1.2))
-        stamp(dg, px, py, wdt * 6, col(mix(ORANGE, PEACH, p), a * 0.55))
+        stamp(dg, px, py, wdt * 3, col(mix(ORANGE, PEACH, p), a * 0.25))
 
     lay = lay.resize((W, H), Image.LANCZOS)
     glow = glow.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(10 * sp))
     a = np.asarray(lay, np.float32) / 255
     g = np.asarray(glow, np.float32) / 255
-    rgb = a[..., :3] * a[..., 3:4] + g[..., :3] * g[..., 3:4] * 0.75
+    rgb = a[..., :3] * a[..., 3:4] + g[..., :3] * g[..., 3:4] * 0.4
     alpha = a[..., 3:4].copy()
 
     # ---- paper plane, shaded faces, at the head of the trail ----
