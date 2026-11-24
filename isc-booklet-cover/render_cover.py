@@ -192,10 +192,32 @@ def render():
     img += (BLUE_3 * 0.10) * (smoothstep(0.45, 0.9, neb) ** 1.5)[..., None]
     img += (ORANGE * 0.05) * (smoothstep(0.55, 0.95, neb2) * smoothstep(0.2, 1.0, xx / W) * smoothstep(0.7, 0.0, yy / H))[..., None]
 
+    # depth: rich blue halo pooled behind the globe, falling off into near-black corners
+    dg_ = np.sqrt(((xx - CX) / R) ** 2 + ((yy - CY) / R) ** 2)
+    halo = np.exp(-np.clip(dg_ - 0.95, 0, None) / 0.38)
+    img = img * (0.35 + 0.65 * smoothstep(2.2, 0.95, dg_))[..., None]
+    img += (halo * 0.30)[..., None] * mix(NAVY_2, BLUE_3, 0.5)
+    img += (np.exp(-np.clip(dg_ - 1.0, 0, None) / 0.18) * 0.22)[..., None] * BLUE_3
+
+    # a faint galactic band crossing behind the globe (dust lanes + warm core)
+    band_d = ((xx - W * 0.5) / W) * 0.42 + ((yy - H * 0.5) / H) * 0.62
+    band = np.exp(-(band_d / 0.11) ** 2)
+    dust = fbm((H, W), 7, 6, seed=41, persistence=0.62)
+    lanes = smoothstep(0.42, 0.68, fbm((H, W), 6, 9, seed=42, persistence=0.6))
+    img += (band * smoothstep(0.35, 0.85, dust) * (1 - 0.8 * lanes) * 0.13)[..., None] * mix(BLUE_4, BLUE_5, 0.3)
+    img += (band ** 3 * smoothstep(0.5, 0.9, dust) * 0.07)[..., None] * PEACH
+
     # stars
     star = np.zeros((H, W), np.float32)
     n = int(2600 * SCALE * SCALE * 4)
     sx, sy = rng.random(n) * W, rng.random(n) * H
+    # extra faint stars concentrated in the galactic band
+    m2 = int(5000 * SCALE * SCALE * 4)
+    bx, by = rng.random(m2 * 3) * W, rng.random(m2 * 3) * H
+    bd = ((bx - W * 0.5) / W) * 0.42 + ((by - H * 0.5) / H) * 0.62
+    keep = rng.random(m2 * 3) < np.exp(-(bd / 0.09) ** 2)
+    sx, sy = np.concatenate([sx, bx[keep]]), np.concatenate([sy, by[keep]])
+    n = len(sx)
     mag = rng.random(n) ** 6
     star[sy.astype(int), sx.astype(int)] += 0.25 + 1.6 * mag
     bigs = np.zeros((H, W), np.float32)
@@ -230,11 +252,11 @@ def render():
     tex2 = np.zeros((H, W), np.float32); tex2[idx] = sample_eq(eq_noise2, la, lo)
 
     ndl = (N @ L).astype(np.float32)
-    day = smoothstep(-0.18, 0.30, ndl)
+    day = smoothstep(-0.10, 0.22, ndl)
     diffuse = np.clip(ndl, 0, 1) ** 0.85
 
     # ocean
-    ocean_t = 0.10 + 0.75 * diffuse + 0.12 * (tex2 - 0.5)
+    ocean_t = 0.04 + 0.92 * diffuse + 0.12 * (tex2 - 0.5)
     ocean = ramp(ocean_t, [(0, NAVY_1 * 0.8), (0.4, NAVY_2), (0.8, BLUE_3), (1.0, mix(BLUE_3, BLUE_4, 0.5))])
     ocean = mix(ocean, mix(BLUE_3, BLUE_4, 0.7), (shf ** 1.4) * 0.6 * day)  # shallow shelves
     # brush streaks in water
@@ -244,14 +266,14 @@ def render():
     relief = np.clip(0.55 * inl + 0.6 * (tex - 0.5) + 0.25, 0, 1)
     land_lit = ramp(relief, [(0, CREAM), (0.35, PEACH), (0.65, SAND), (1, GOLD)])
     land_lit = mix(land_lit, GOLD_D, smoothstep(0.62, 0.95, tex) * 0.35)
-    shade = 0.30 + 0.95 * diffuse
+    shade = 0.16 + 1.20 * diffuse
     land_col = land_lit * shade[..., None]
     land_col = mix(land_col, BRONZE * 0.7, (1 - day) * 0.0)
 
     surf = mix(ocean, land_col, land)
 
     # night side: deep navy, land slightly visible
-    night = mix(NAVY_0 * 1.2, mix(NAVY_1, BRONZE * 0.35, 0.4), land * 0.8)
+    night = mix(NAVY_0 * 0.75, mix(NAVY_0, BRONZE * 0.22, 0.5), land * 0.8)
     surf = mix(night, surf, day)
 
     # warm key light / cool fill
@@ -296,12 +318,17 @@ def render():
         np.add.at(lights, (py, px), w)
     except FileNotFoundError:
         pass
-    lights_core = ndimage.gaussian_filter(lights, 0.7 * SCALE * 2)
-    lights_glow = ndimage.gaussian_filter(lights, 4.0 * SCALE * 2)
-    nightness = (1 - smoothstep(-0.25, 0.12, ndl))
-    lamp = (np.clip(lights_core * 1.4, 0, 1.6) + lights_glow * 6) * nightness * nz ** 0.5
-    lamp = 1.3 * (1 - np.exp(-lamp * 1.1))
-    surf += lamp[..., None] * mix(SAND, ORANGE, 0.35) * 1.1
+    sp = SCALE * 2  # 2 at print size
+    lights_core = ndimage.gaussian_filter(lights, 0.42 * sp)
+    lights_mid = ndimage.gaussian_filter(lights, 1.6 * sp)
+    lights_glow = ndimage.gaussian_filter(lights, 7.0 * sp)
+    nightness = (1 - smoothstep(-0.22, 0.10, ndl)) * nz ** 0.4
+    core = 1.9 * (1 - np.exp(-lights_core * 2.4 * sp * sp))
+    mid = 1.2 * (1 - np.exp(-lights_mid * 3.0 * sp * sp))
+    glow = 0.9 * (1 - np.exp(-lights_glow * 6.0 * sp * sp))
+    surf += (core * nightness)[..., None] * mix(CREAM, PEACH, 0.3)
+    surf += (mid * nightness)[..., None] * mix(SAND, ORANGE, 0.25) * 0.8
+    surf += (glow * nightness)[..., None] * mix(ORANGE, ORANGE_D, 0.4) * 0.45
 
     # painted cloud veil: domain-warped, zonally stretched noise anchored to the globe
     cw = clouds_eq()
@@ -316,7 +343,7 @@ def render():
     lit_side = smoothstep(-0.4, 0.6, ndl)
     surf *= (0.55 + 0.45 * nz ** 0.35)[..., None]
     fres = (1 - nz) ** 3.4
-    atm_in = mix(BLUE_3, BLUE_4, lit_side) * (fres * (0.15 + 0.7 * lit_side) * (1 - 0.5 * land))[..., None]
+    atm_in = mix(BLUE_3, BLUE_4, lit_side) * (fres * (0.06 + 0.85 * lit_side) * (1 - 0.5 * land))[..., None]
     surf += atm_in
 
     img = mix(img, surf, aa)
@@ -357,27 +384,27 @@ def render():
     # ---------- connection arcs ----------
     arcs = render_arcs()
     img = img + arcs[..., :3]
-    orbit = render_orbit()
-    img = img * (1 - orbit[..., 3:4]) + orbit[..., :3]
-
-    # ---------- finishing: bloom, vignette, grain ----------
-    lum = img.mean(-1)
-    bright = np.clip(img - 0.75, 0, None) * smoothstep(0.75, 1.3, lum)[..., None]
-    bloom = np.stack([ndimage.gaussian_filter(bright[..., c], 18 * SCALE * 2) for c in range(3)], -1)
-    img += bloom * 0.9
-
+    # ---------- finishing: vignette, title fade, plane, bloom ----------
     vig = smoothstep(1.15, 0.35, np.sqrt(((xx - W / 2) / (W * 0.62)) ** 2 + ((yy - H * 0.45) / (H * 0.70)) ** 2))
-    img *= (0.55 + 0.45 * vig)[..., None]
+    img *= (0.45 + 0.55 * vig)[..., None]
 
     # bottom fade into navy for the title area
     bf = smoothstep(0.50, 0.97, yy / H)
     img = mix(img, NAVY_0 * 1.1, bf * 0.72)
 
+    orbit = render_orbit()
+    img = img * (1 - orbit[..., 3:4]) + orbit[..., :3]
+
+    lum = img.mean(-1)
+    bright = np.clip(img - 0.75, 0, None) * smoothstep(0.75, 1.3, lum)[..., None]
+    bloom = np.stack([ndimage.gaussian_filter(bright[..., c], 18 * SCALE * 2) for c in range(3)], -1)
+    img += bloom * 0.9
+
     # gentle contrast + saturation lift
     lum = img @ np.array([0.2126, 0.7152, 0.0722], np.float32)
-    img = lum[..., None] + (img - lum[..., None]) * 1.18
+    img = lum[..., None] + (img - lum[..., None]) * 1.22
     img = np.clip(img, 0, None)
-    img = img ** 1.08
+    img = img ** 1.14
 
     # filmic tone map (soft shoulder keeps highlights from clipping)
     img = 1 - np.exp(-img * 1.6)
@@ -466,6 +493,7 @@ def render_arcs():
 def render_orbit():
     """Tilted orbit trail around the globe ending in a paper plane (echoes the ISC logo)."""
     ss = 3
+    sp = SCALE * 2
     lay = Image.new("RGBA", (W * ss, H * ss), (0, 0, 0, 0))
     glow = Image.new("RGBA", (W * ss, H * ss), (0, 0, 0, 0))
     dl, dg = ImageDraw.Draw(lay), ImageDraw.Draw(glow)
@@ -473,7 +501,7 @@ def render_orbit():
     u = np.array([np.cos(roll), np.sin(roll), 0.0])
     v = np.array([0.0, -0.24, 0.97]); v -= u * (u @ v); v /= np.linalg.norm(v)
     ro = 1.13
-    t = np.linspace(1.12 * np.pi, 0.13 * np.pi, 1400)
+    t = np.linspace(1.12 * np.pi, 0.035 * np.pi, 1700)
     P = ro * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * v)
     x, y, z = CX + R * P[:, 0], CY - R * P[:, 1], P[:, 2]
     hidden = (z < 0) & (P[:, 0] ** 2 + P[:, 1] ** 2 < 1)
@@ -482,39 +510,91 @@ def render_orbit():
     def col(c, a):
         return tuple(int(np.clip(v_, 0, 1) * 255) for v_ in c) + (int(np.clip(a, 0, 1) * 255),)
 
+    def stamp(d, px, py, w, fill):
+        r = w / 2
+        d.ellipse([px - r, py - r, px + r, py + r], fill=fill)
+
     for k in range(len(t) - 1):
         if hidden[k] or hidden[k + 1]:
             continue
         p = prog[k]
-        a = p ** 1.4
-        c = ramp(np.array(p), [(0, GOLD_D), (0.45, ORANGE), (0.85, SAND), (1, CREAM)])
-        wdt = (1.0 + 6.0 * p ** 1.3) * (0.75 + 0.25 * (z[k] + 1)) * SCALE * 2 * ss
-        seg = [(x[k] * ss, y[k] * ss), (x[k + 1] * ss, y[k + 1] * ss)]
-        rw = wdt / 2
-        dl.ellipse([seg[0][0] - rw, seg[0][1] - rw, seg[0][0] + rw, seg[0][1] + rw], fill=col(c, a))
-        dl.line(seg, fill=col(c, a), width=max(1, int(wdt)))
-        dg.line(seg, fill=col(mix(ORANGE, PEACH, p), a * 0.8), width=max(1, int(wdt * 5)))
-
-    # paper plane at the head, pointing along the tangent
-    hx, hy = x[-1] * ss, y[-1] * ss
-    dx, dy = x[-1] - x[-6], y[-1] - y[-6]
-    f = np.array([dx, dy]) / np.hypot(dx, dy)
-    nrm = np.array([-f[1], f[0]])
-    sz = 95 * SCALE * 2 * ss
-    def P2(a, b):
-        q = np.array([hx, hy]) + f * a * sz + nrm * b * sz
-        return (float(q[0]), float(q[1]))
-    nose, wl, notch, wr, fold = P2(0.9, 0), P2(-0.75, -0.62), P2(-0.35, -0.05), P2(-0.7, 0.30), P2(-0.55, 0.08)
-    dl.polygon([nose, wl, notch], fill=col(mix(BLUE_5, CREAM, 0.8), 1))
-    dl.polygon([nose, notch, fold], fill=col(ORANGE, 1))
-    dl.polygon([nose, fold, wr], fill=col(BLUE_3, 1))
+        a = p ** 1.25
+        c = ramp(np.array(p), [(0, GOLD_D), (0.4, ORANGE), (0.8, SAND), (1, CREAM)])
+        wdt = (1.2 + 11.0 * p ** 1.6) * (0.75 + 0.25 * (z[k] + 1)) * sp * ss
+        px, py = x[k] * ss, y[k] * ss
+        stamp(dl, px, py, wdt, col(c, a))
+        if p > 0.55:  # hot white core on the leading stretch
+            stamp(dl, px, py, wdt * 0.38, col(CREAM, ((p - 0.55) / 0.45) ** 1.2))
+        stamp(dg, px, py, wdt * 6, col(mix(ORANGE, PEACH, p), a * 0.55))
 
     lay = lay.resize((W, H), Image.LANCZOS)
-    glow = glow.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(9 * SCALE * 2))
+    glow = glow.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(10 * sp))
     a = np.asarray(lay, np.float32) / 255
     g = np.asarray(glow, np.float32) / 255
-    rgb = a[..., :3] * a[..., 3:4] + g[..., :3] * g[..., 3:4] * 0.6
-    return np.concatenate([rgb, a[..., 3:4]], -1)
+    rgb = a[..., :3] * a[..., 3:4] + g[..., :3] * g[..., 3:4] * 0.75
+    alpha = a[..., 3:4].copy()
+
+    # ---- paper plane, shaded faces, at the head of the trail ----
+    hx, hy = x[-1], y[-1]
+    dx, dy = x[-1] - x[-8], y[-1] - y[-8]
+    f = np.array([dx, dy]) / np.hypot(dx, dy)
+    nrm = np.array([-f[1], f[0]])
+    sz = 150 * sp  # px at final size
+    cx0, cy0 = hx + f[0] * sz * 0.15, hy + f[1] * sz * 0.15
+    box = int(sz * 2.6)
+    x0, y0 = int(cx0 - box / 2), int(cy0 - box / 2)
+    S = 4  # local supersampling
+    yy, xx = np.mgrid[0:box * S, 0:box * S].astype(np.float32)
+    gx, gy = x0 + (xx + 0.5) / S, y0 + (yy + 0.5) / S
+    la = ((gx - cx0) * f[0] + (gy - cy0) * f[1]) / sz  # along flight
+    lb = ((gx - cx0) * nrm[0] + (gy - cy0) * nrm[1]) / sz  # across
+
+    def tri(p0, p1, p2):
+        def side(a_, b_):
+            return (lb - a_[1]) * (b_[0] - a_[0]) - (la - a_[0]) * (b_[1] - a_[1])
+        s0, s1, s2 = side(p0, p1), side(p1, p2), side(p2, p0)
+        return (((s0 >= 0) & (s1 >= 0) & (s2 >= 0)) | ((s0 <= 0) & (s1 <= 0) & (s2 <= 0))).astype(np.float32)
+
+    NOSE, WL, C, K, WR = (1.0, 0.0), (-0.80, -0.98), (-0.40, -0.05), (-0.60, 0.20), (-0.78, 0.56)
+    top, keel, low = tri(NOSE, WL, C), tri(NOSE, C, K), tri(NOSE, K, WR)
+    keel *= 1 - top
+    low *= (1 - top) * (1 - keel)
+    tn = np.clip((la + 0.9) / 1.9, 0, 1)  # 0 tail -> 1 nose
+    c_top = ramp(tn * 0.75 + np.clip(-lb, 0, 1) * 0.25, [(0, mix(PEACH, SAND, 0.4) * 0.95), (0.45, PEACH * 1.08), (0.8, CREAM * 1.15), (1, np.array([1.3, 1.28, 1.22], np.float32))])
+    # soft shadow where the top wing meets the fold
+    c_top *= (1 - 0.35 * np.exp(-((lb - C[1] * (la - 1.0) / (C[0] - 1.0)) / 0.06) ** 2) * (la < 1.0))[..., None]
+    c_keel = ramp(tn, [(0, ORANGE_D * 0.8), (0.6, ORANGE), (1, PEACH)])
+    c_low = ramp(tn, [(0, NAVY_2), (0.6, BLUE_3), (1, BLUE_4)])
+    pcol = c_top * top[..., None] + c_keel * keel[..., None] + c_low * low[..., None]
+    pa = np.clip(top + keel + low, 0, 1)
+    # bright leading edges
+    edge = (np.abs(lb - (WL[1] / (WL[0] - 1.0)) * (la - 1.0)) < 0.018) * (la > WL[0]) * (la < 1.0)
+    edge = edge.astype(np.float32) * pa
+    pcol = pcol * (1 - edge[..., None] * 0.8) + CREAM * edge[..., None] * 0.8
+
+    def down(arr):
+        return arr.reshape(box, S, box, S, *arr.shape[2:]).mean(axis=(1, 3))
+
+    pcol, pa = down(pcol * pa[..., None]), down(pa)
+    # paste into full-size layers (clip at canvas edge)
+    X0, Y0, X1, Y1 = max(0, x0), max(0, y0), min(W, x0 + box), min(H, y0 + box)
+    sl = (slice(Y0 - y0, Y1 - y0), slice(X0 - x0, X1 - x0))
+    halo = np.zeros((H, W), np.float32)
+    halo[Y0:Y1, X0:X1] = pa[sl]
+    halo_w = ndimage.gaussian_filter(halo, sz * 0.22)
+    halo_t = ndimage.gaussian_filter(halo, sz * 0.05)
+    rgb += (halo_w * 2.2)[..., None] * mix(ORANGE, PEACH, 0.4) + (halo_t * 0.7)[..., None] * PEACH
+    rgb[Y0:Y1, X0:X1] = rgb[Y0:Y1, X0:X1] * (1 - pa[sl][..., None]) + pcol[sl]
+    alpha[Y0:Y1, X0:X1, 0] = np.maximum(alpha[Y0:Y1, X0:X1, 0], pa[sl])
+
+    # small four-point glint at the nose
+    nx_, ny_ = cx0 + f[0] * sz, cy0 + f[1] * sz
+    YY, XX = np.mgrid[0:H, 0:W].astype(np.float32)
+    ddx, ddy = (XX - nx_) / sz, (YY - ny_) / sz
+    star = np.exp(-np.abs(ddy) / 0.012) * np.exp(-np.abs(ddx) / 0.55) + np.exp(-np.abs(ddx) / 0.012) * np.exp(-np.abs(ddy) / 0.35)
+    star += np.exp(-np.hypot(ddx, ddy) / 0.06) * 1.5
+    rgb += (star * 0.75)[..., None] * mix(PEACH, CREAM, 0.6)
+    return np.concatenate([rgb, alpha], -1)
 
 
 def add_title(im):
