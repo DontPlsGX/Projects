@@ -97,7 +97,7 @@ def land_textures():
     p = os.path.join(CACHE, "land.npz")
     if os.path.exists(p):
         d = np.load(p)
-        return d["cov"], d["inland"], d["shelf"]
+        return d["cov"], d["inland"], d["shelf"], d["offshore"]
     import global_land_mask.globe as g
     m = ~g._mask  # _mask is True over ocean; (21600, 43200) lat 90..-90, lon -180..180
     cov = m.reshape(5400, 4, 10800, 4).mean(axis=(1, 3)).astype(np.float32)
@@ -109,8 +109,9 @@ def land_textures():
     shelf = np.exp(-dout / 10.0)  # 1 at coast, fades over ~0.7 deg
     inland = ndimage.zoom(inland, 2, order=1)
     shelf = ndimage.zoom(shelf, 2, order=1)
-    np.savez_compressed(p, cov=cov, inland=inland, shelf=shelf)
-    return cov, inland, shelf
+    offshore = ndimage.zoom(dout / 15.0, 2, order=1).astype(np.float32)  # degrees from nearest coast
+    np.savez_compressed(p, cov=cov, inland=inland, shelf=shelf, offshore=offshore)
+    return cov, inland, shelf, offshore
 
 
 def sample_eq(tex, lat, lon):
@@ -138,6 +139,23 @@ def clouds_eq():
     c = (c * band).astype(np.float32)
     np.save(p, c)
     return c
+
+
+def currents_eq():
+    """Smooth, east-west flowing scalar field; its contour lines read as ocean currents."""
+    p = os.path.join(CACHE, "currents.npy")
+    if os.path.exists(p):
+        return np.load(p)
+    h, w = 900, 1800
+    base = fbm_wrap((h, w), 4, 2, seed=51, persistence=0.5)
+    wx = fbm_wrap((h, w), 4, 3, seed=52) - 0.5
+    wy = fbm_wrap((h, w), 4, 3, seed=53) - 0.5
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    f = ndimage.map_coordinates(base, [yy + wy * 60, xx + wx * 260], order=1, mode="wrap")
+    f = f * 0.6 + (yy / h) * 0.9  # bias toward latitude bands -> mostly zonal flow
+    f = ndimage.gaussian_filter(f, 3).astype(np.float32)
+    np.save(p, f)
+    return f
 
 
 # ---- camera ------------------------------------------------------------------
@@ -235,12 +253,14 @@ def render():
     lat = np.degrees(np.arcsin(np.clip(world[..., 2], -1, 1)))
     lon = np.degrees(np.arctan2(world[..., 1], world[..., 0]))
 
-    cov, inland, shelf = land_textures()
+    cov, inland, shelf, offshore = land_textures()
     idx = np.where(inside)
     la, lo = lat[idx], lon[idx]
     land = np.zeros((H, W), np.float32); land[idx] = sample_eq(cov, la, lo)
     inl = np.zeros((H, W), np.float32); inl[idx] = sample_eq(inland, la, lo)
     shf = np.zeros((H, W), np.float32); shf[idx] = sample_eq(shelf, la, lo)
+    off = np.zeros((H, W), np.float32); off[idx] = sample_eq(offshore, la, lo)
+    cur = np.zeros((H, W), np.float32); cur[idx] = sample_eq(currents_eq(), la, lo)
     land = smoothstep(0.35, 0.65, land)
     land_full = land.copy()
     land *= smoothstep(-64, -56, lat)  # keep Antarctica out of the title area
@@ -259,21 +279,39 @@ def render():
     ocean_t = 0.04 + 0.92 * diffuse + 0.12 * (tex2 - 0.5)
     ocean = ramp(ocean_t, [(0, NAVY_1 * 0.8), (0.4, NAVY_2), (0.8, BLUE_3), (1.0, mix(BLUE_3, BLUE_4, 0.5))])
     ocean = mix(ocean, mix(BLUE_3, BLUE_4, 0.7), (shf ** 1.4) * 0.6 * day)  # shallow shelves
-    # brush streaks in water
+    # brush streaks in water + deeper tone far from the coasts
     ocean *= (0.92 + 0.16 * tex2)[..., None]
+    ocean *= (1 - 0.22 * smoothstep(0.5, 9.0, off))[..., None]
+
+    # engraved ocean layers (kept faint): bathymetric contours that echo every coastline,
+    # and long flowing current lines across the open sea
+    def contour(F, step, width=0.9):
+        gF = np.abs(np.gradient(F, axis=0)) + np.abs(np.gradient(F, axis=1)) + 1e-5
+        dd = np.abs(F / step - np.round(F / step)) * step
+        return np.exp(-(dd / (gF * width)) ** 2)
+    sea = (1 - smoothstep(0.05, 0.5, land)) * inside
+    vis = 0.35 + 0.65 * day
+    bathy = contour(off, 1.1, 0.7) * np.exp(-off / 3.2) * (off > 0.25)
+    flow = contour(cur, 0.035, 0.7) * smoothstep(0.6, 2.5, off)
+    ocean_lines = (bathy * 0.21 + flow * 0.15) * sea * vis * nz ** 0.6
+    # dotted mid-ocean texture (very light halftone, grows with depth)
+    gs = 9 * SCALE * 2
+    dots = (np.sin(xx * np.pi / gs) * np.sin(yy * np.pi / gs)) ** 2
+    dots = smoothstep(0.80, 0.97, dots) * smoothstep(3.0, 12.0, off) * sea * 0.05 * vis
 
     # land: cream -> sand -> gold with inland relief and painterly mottling
     relief = np.clip(0.55 * inl + 0.6 * (tex - 0.5) + 0.25, 0, 1)
     land_lit = ramp(relief, [(0, CREAM), (0.35, PEACH), (0.65, SAND), (1, GOLD)])
     land_lit = mix(land_lit, GOLD_D, smoothstep(0.62, 0.95, tex) * 0.35)
-    shade = 0.16 + 1.20 * diffuse
+    shade = 0.22 + 1.12 * diffuse
     land_col = land_lit * shade[..., None]
     land_col = mix(land_col, BRONZE * 0.7, (1 - day) * 0.0)
 
     surf = mix(ocean, land_col, land)
+    surf += (ocean_lines)[..., None] * mix(BLUE_4, BLUE_5, 0.6) + dots[..., None] * BLUE_5
 
     # night side: deep navy, land slightly visible
-    night = mix(NAVY_0 * 0.75, mix(NAVY_0, BRONZE * 0.22, 0.5), land * 0.8)
+    night = mix(mix(NAVY_0, NAVY_1, 0.55), mix(NAVY_1 * 0.8, BRONZE * 0.45, 0.45), land * 0.85)
     surf = mix(night, surf, day)
 
     # warm key light / cool fill
@@ -501,7 +539,7 @@ def render_orbit():
     u = np.array([np.cos(roll), np.sin(roll), 0.0])
     v = np.array([0.0, -0.24, 0.97]); v -= u * (u @ v); v /= np.linalg.norm(v)
     ro = 1.13
-    t = np.linspace(1.12 * np.pi, 0.035 * np.pi, 1700)
+    t = np.linspace(1.12 * np.pi, 0.06 * np.pi, 1700)
     P = ro * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * v)
     x, y, z = CX + R * P[:, 0], CY - R * P[:, 1], P[:, 2]
     hidden = (z < 0) & (P[:, 0] ** 2 + P[:, 1] ** 2 < 1)
@@ -518,9 +556,9 @@ def render_orbit():
         if hidden[k] or hidden[k + 1]:
             continue
         p = prog[k]
-        a = p ** 1.25
+        a = 0.38 + 0.62 * p ** 1.3
         c = ramp(np.array(p), [(0, GOLD_D), (0.4, ORANGE), (0.8, SAND), (1, CREAM)])
-        wdt = (1.2 + 11.0 * p ** 1.6) * (0.75 + 0.25 * (z[k] + 1)) * sp * ss
+        wdt = (3.2 + 9.5 * p ** 1.5) * (0.75 + 0.25 * (z[k] + 1)) * sp * ss
         px, py = x[k] * ss, y[k] * ss
         stamp(dl, px, py, wdt, col(c, a))
         if p > 0.55:  # hot white core on the leading stretch
@@ -536,11 +574,13 @@ def render_orbit():
 
     # ---- paper plane, shaded faces, at the head of the trail ----
     hx, hy = x[-1], y[-1]
-    dx, dy = x[-1] - x[-8], y[-1] - y[-8]
+    dx, dy = x[-1] - x[-40], y[-1] - y[-40]
     f = np.array([dx, dy]) / np.hypot(dx, dy)
     nrm = np.array([-f[1], f[0]])
     sz = 150 * sp  # px at final size
-    cx0, cy0 = hx + f[0] * sz * 0.15, hy + f[1] * sz * 0.15
+    TAIL = (-0.40, -0.05)
+    cx0 = hx - (f[0] * TAIL[0] + nrm[0] * TAIL[1]) * sz
+    cy0 = hy - (f[1] * TAIL[0] + nrm[1] * TAIL[1]) * sz
     box = int(sz * 2.6)
     x0, y0 = int(cx0 - box / 2), int(cy0 - box / 2)
     S = 4  # local supersampling
@@ -560,7 +600,7 @@ def render_orbit():
     keel *= 1 - top
     low *= (1 - top) * (1 - keel)
     tn = np.clip((la + 0.9) / 1.9, 0, 1)  # 0 tail -> 1 nose
-    c_top = ramp(tn * 0.75 + np.clip(-lb, 0, 1) * 0.25, [(0, mix(PEACH, SAND, 0.4) * 0.95), (0.45, PEACH * 1.08), (0.8, CREAM * 1.15), (1, np.array([1.3, 1.28, 1.22], np.float32))])
+    c_top = ramp(tn * 0.75 + np.clip(-lb, 0, 1) * 0.25, [(0, mix(PEACH, SAND, 0.4) * 0.95), (0.45, PEACH * 1.08), (0.8, CREAM), (1, np.array([1.0, 0.99, 0.96], np.float32))])
     # soft shadow where the top wing meets the fold
     c_top *= (1 - 0.35 * np.exp(-((lb - C[1] * (la - 1.0) / (C[0] - 1.0)) / 0.06) ** 2) * (la < 1.0))[..., None]
     c_keel = ramp(tn, [(0, ORANGE_D * 0.8), (0.6, ORANGE), (1, PEACH)])
@@ -579,21 +619,15 @@ def render_orbit():
     # paste into full-size layers (clip at canvas edge)
     X0, Y0, X1, Y1 = max(0, x0), max(0, y0), min(W, x0 + box), min(H, y0 + box)
     sl = (slice(Y0 - y0, Y1 - y0), slice(X0 - x0, X1 - x0))
-    halo = np.zeros((H, W), np.float32)
-    halo[Y0:Y1, X0:X1] = pa[sl]
-    halo_w = ndimage.gaussian_filter(halo, sz * 0.22)
-    halo_t = ndimage.gaussian_filter(halo, sz * 0.05)
-    rgb += (halo_w * 2.2)[..., None] * mix(ORANGE, PEACH, 0.4) + (halo_t * 0.7)[..., None] * PEACH
+    # soft drop shadow below the plane (separates it from the bright limb without a glow)
+    sh = np.zeros((H, W), np.float32)
+    off_x, off_y = int(0.10 * sz), int(0.16 * sz)
+    sh[min(H, Y0 + off_y):min(H, Y1 + off_y), min(W, X0 + off_x):min(W, X1 + off_x)] = \
+        pa[sl][: max(0, min(H, Y1 + off_y) - min(H, Y0 + off_y)), : max(0, min(W, X1 + off_x) - min(W, X0 + off_x))]
+    sh = ndimage.gaussian_filter(sh, sz * 0.10) * 0.45
+    alpha[..., 0] = np.maximum(alpha[..., 0], sh)
     rgb[Y0:Y1, X0:X1] = rgb[Y0:Y1, X0:X1] * (1 - pa[sl][..., None]) + pcol[sl]
     alpha[Y0:Y1, X0:X1, 0] = np.maximum(alpha[Y0:Y1, X0:X1, 0], pa[sl])
-
-    # small four-point glint at the nose
-    nx_, ny_ = cx0 + f[0] * sz, cy0 + f[1] * sz
-    YY, XX = np.mgrid[0:H, 0:W].astype(np.float32)
-    ddx, ddy = (XX - nx_) / sz, (YY - ny_) / sz
-    star = np.exp(-np.abs(ddy) / 0.012) * np.exp(-np.abs(ddx) / 0.55) + np.exp(-np.abs(ddx) / 0.012) * np.exp(-np.abs(ddy) / 0.35)
-    star += np.exp(-np.hypot(ddx, ddy) / 0.06) * 1.5
-    rgb += (star * 0.75)[..., None] * mix(PEACH, CREAM, 0.6)
     return np.concatenate([rgb, alpha], -1)
 
 
